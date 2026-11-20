@@ -33,20 +33,22 @@ GitHub 免费提供 Linux 云主机。把项目代码推到 GitHub 仓库，仓�
 > 若仓库不存在，push 会失败。从截图看你的账号是 `sharodger`，
 > 那你建的仓库地址就是 `https://github.com/sharodger/ownerrightsai.git`。
 
-### 第 3 步：在本机把项目推上去
+### 第 3 步：推送（本地已备好，只需一条命令）
 
-在项目目录 `D:\Agent Project\业主维权AI助手` 打开命令行（地址栏输 `cmd` 回车），依次执行：
+**本机已由助手完成**：Git 安装、证书配置、仓库初始化、代码提交、remote 设置。
+你**不用**再执行 `git init / add / commit / remote add`——这些都已做好。
+
+**关掉旧 cmd，重新打开一个新 cmd 窗口**（这样 PATH 才有 git），执行：
 
 ```bash
-git init
-git add .
-git commit -m "业主维权AI助手 Android 构建"
-git branch -M main
-git remote add origin https://github.com/你的用户名/ownerrightsai.git
+cd /d "D:\Agent Project\业主维权AI助手"
 git push -u origin main
 ```
 
 > 推送时会弹 GitHub 登录窗口，用浏览器完成登录即可（Git 新版支持）。
+> 若提示输入用户名/密码，用户名填 `sharodger`，密码用 **Personal Access Token**
+> （GitHub → Settings → Developer settings → Personal access tokens 生成，勾选 repo 权限）。
+> 这一步涉及你的 GitHub 账号登录，**必须由你本人操作**，助手无法代登录。
 
 ## 触发构建（三选一）
 
