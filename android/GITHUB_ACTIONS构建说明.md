@@ -16,22 +16,23 @@ GitHub 免费提供 Linux 云主机。把项目代码推到 GitHub 仓库，仓�
   之前截图里 `git 不是内部或外部命令` 是因为装之前开的 cmd 窗口——
   **请关掉旧 cmd，重新打开一个新窗口**，git 命令就可用了。
 - 已全局配置 `http.schannelCheckRevoke=false`，解决本机 Windows 的证书吊销检查失败问题
-  （否则 `git push` 会报 `CRYPT_E_REVOCATION_OFFLINE`）。已验证能连 GitHub。
+  （否则 `git push` 会报 `CRYPT_E_REVOCATION_OFFLINE`）。
+  **但这只解决证书检查，不代表网络已连通 GitHub**；当前网络实测仍可能超时，
+  遇到 `Failed to connect to github.com port 443` 请按文末"推送失败排查"处理。
 - GitHub 账号：若还没有，到 https://github.com 注册（免费）。
   从截图看你已用 `sharodger` 这个账号，若已注册可跳过。
 
-### 第 2 步：在 GitHub 网页上建一个空仓库
+### 第 2 步：确认 GitHub 仓库
 
-1. 点右上角 `+` → `New repository`。
-2. Repository name 填 `ownerrightsai`（任意英文即可）。
-3. 选 **Public**（公开仓库，Actions 完全免费；私有仓库免费额度有限）。
-4. **不要**勾选 "Add a README file"（建空仓库）。
-5. 点 `Create repository`，记下页面显示的地址，形如：
-   `https://github.com/你的用户名/ownerrightsai.git`
+仓库已创建并确认是公开空仓库：
 
-> **重要**：必须先在第 2 步网页上建好仓库，第 3 步的 `git push` 才能成功。
-> 若仓库不存在，push 会失败。从截图看你的账号是 `sharodger`，
-> 那你建的仓库地址就是 `https://github.com/sharodger/ownerrightsai.git`。
+```text
+https://github.com/sharodger/cium.git
+```
+
+默认分支是 `main`。本步骤已完成，无需再做任何操作。
+
+> 本地远程地址已同步指向该仓库。若以后换电脑克隆，使用上面的地址即可。
 
 ### 第 3 步：推送（本地已备好，只需一条命令）
 
@@ -76,6 +77,89 @@ git push -u origin main
 | 找不到 APK 下载 | 只有构建成功才有 Artifact；失败则无 |
 | 免费额度 | 公开仓库 Actions 免费；私有仓库每月 2000 分钟，构建一次约 20-40 分钟 |
 | 装到手机解析包错误 | 确认手机 Android ≥ 5.0（minapi 21）；64 位机型可把 spec 的 `android.arch` 改成 `arm64-v8a` 重新构建 |
+
+## 推送失败排查（截图中的报错）
+
+截图里的错误是：
+
+```text
+fatal: unable to access 'https://github.com/sharodger/cium.git/':
+Failed to connect to github.com port 443 after 21029 ms: Could not connect to server
+```
+
+这不是代码错误，也不是本地仓库出错，而是**本机到 GitHub 的 443 端口没有连通**。
+截图前面两条 `cd` 报错可忽略：一条把路径中的"业主"输成了别的字，另一条是多余的 `cd d`；
+当前目录本来就已经在 `D:\Agent Project\业主维权AI助手`。
+
+先确认仓库已按第 2 步创建，再按下面任选一种方式。
+
+### 方案 A：给 Git 设置你自己的代理
+
+如果你电脑上有代理软件，先确认它的本地端口（常见为 `7890`，以软件界面显示为准），
+然后在**新打开的 cmd** 中执行（把 `7890` 换成实际端口）：
+
+```bat
+set HTTP_PROXY=http://127.0.0.1:7890
+set HTTPS_PROXY=http://127.0.0.1:7890
+git config --global http.proxy http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+git ls-remote origin
+```
+
+`ls-remote` 能列出内容后，再执行：
+
+```bat
+cd /d "D:\Agent Project\业主维权AI助手"
+git push -u origin main
+```
+
+若没有代理软件，不要随便填端口，直接用方案 B。
+
+### 方案 B：改用 SSH 的 443 端口（推荐，绕开 HTTPS 443 限制）
+
+1. 生成密钥（已有 `~/.ssh/id_ed25519` 可跳过）：
+
+```bat
+ssh-keygen -t ed25519 -C "sharodger"
+type "%USERPROFILE%\.ssh\id_ed25519.pub"
+```
+
+2. 复制 `type` 输出的整行公钥，到 GitHub → `Settings` → `SSH and GPG keys` → `New SSH key` 添加。
+
+3. 创建/编辑 `C:\Users\Administrator\.ssh\config`，写入：
+
+```text
+Host github.com
+    HostName ssh.github.com
+    Port 443
+    User git
+```
+
+4. 测试并推送：
+
+```bat
+ssh -T git@github.com
+cd /d "D:\Agent Project\业主维权AI助手"
+git remote set-url origin git@github.com:sharodger/cium.git
+git push -u origin main
+```
+
+`ssh -T` 出现 `Hi sharodger! You've successfully authenticated` 即成功
+（`failed to connect` 不代表认证失败，只表示端口仍不通）。推送成功后，
+按前面"触发构建"手动运行 Actions。
+
+### 注意
+
+- 如果之前设置过代理又想改走 SSH，先清掉代理配置：
+
+```bat
+git config --global --unset http.proxy
+git config --global --unset https.proxy
+```
+
+- **不要把 GitHub 用户名/密码或 Token 发给任何第三方"加速镜像"网站。**
+- 推送这一步涉及你的 GitHub 账号登录或 SSH 密钥，必须由你本人完成；
+  助手只能把本地仓库、远程地址和命令准备好。
 
 ## 安全说明
 
