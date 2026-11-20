@@ -1,0 +1,22 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 本地构建产物（云端构建无需推送）
+build/
+build_work/
+build_dist/
+dist_app/
+bin/
+.buildozer/
+/buildozer.spec
+*.apk
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 注意：以下目录/文件必须保留（不要加进排除列表）：
+#   .github/workflows/   云端构建工作流
+#   android/             打包配置与说明
+#   legal/dist/          演示更新包（APP 需要）
