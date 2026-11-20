@@ -55,6 +55,10 @@ android.sdk = 35
 android.ndk = 25c
 android.use_androidx = True
 
+# 云端构建必须自动接受 Android SDK 许可，否则 build-tools 会被跳过，
+# 接着报 "build-tools folder not found" / "Aidl not found"。
+android.accept_sdk_license = True
+
 # 架构：先打 armeabi-v7a，兼容绝大多数安卓机；64 位机型可在构建脚本里加 arm64-v8a
 android.arch = armeabi-v7a
 
