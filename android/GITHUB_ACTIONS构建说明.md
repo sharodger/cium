@@ -117,36 +117,30 @@ git push -u origin main
 
 ### 方案 B：改用 SSH 的 443 端口（推荐，绕开 HTTPS 443 限制）
 
-1. 生成密钥（已有 `~/.ssh/id_ed25519` 可跳过）：
+本方案**本地已配置完成**，无需再生成密钥或写 config：
 
-```bat
-ssh-keygen -t ed25519 -C "sharodger"
-type "%USERPROFILE%\.ssh\id_ed25519.pub"
-```
+- 专用密钥：`C:\Users\Administrator\.ssh\id_ed25519_cium`
+- 配置文件：`C:\Users\Administrator\.ssh\config`（别名 `github-cium`，走 `ssh.github.com:443`）
+- 本地 origin 已设为：`git@github-cium:sharodger/cium.git`
+- 已实测 SSH 443 端口可达，当前只差把公钥授权到 GitHub
 
-2. 复制 `type` 输出的整行公钥，到 GitHub → `Settings` → `SSH and GPG keys` → `New SSH key` 添加。
-
-3. 创建/编辑 `C:\Users\Administrator\.ssh\config`，写入：
+你现在只需把下面这一整行公钥复制到 GitHub → `Settings` → `SSH and GPG keys` → `New SSH key`：
 
 ```text
-Host github.com
-    HostName ssh.github.com
-    Port 443
-    User git
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP7AHwvsq2kU2rFo1J5CkESCUX09u28UdT4ppa4V9s1M github-cium
 ```
 
-4. 测试并推送：
+然后测试并推送：
 
 ```bat
-ssh -T git@github.com
+ssh -T github-cium
 cd /d "D:\Agent Project\业主维权AI助手"
-git remote set-url origin git@github.com:sharodger/cium.git
 git push -u origin main
 ```
 
-`ssh -T` 出现 `Hi sharodger! You've successfully authenticated` 即成功
-（`failed to connect` 不代表认证失败，只表示端口仍不通）。推送成功后，
-按前面"触发构建"手动运行 Actions。
+`ssh -T` 出现 `Hi sharodger! You've successfully authenticated` 即成功。
+如果出现 `Permission denied (publickey)`，说明公钥尚未添加到 GitHub
+或复制时漏了字符。推送成功后按前面"触发构建"手动运行 Actions。
 
 ### 注意
 
