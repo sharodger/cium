@@ -39,6 +39,16 @@ jobs:
             https://raw.githubusercontent.com/isis-project/isis-fonts/master/NOTICE
           test -s assets/fonts/DroidSansFallbackFull.ttf
 
+      # 2b) 下载 Tesseract 简体中文语言包（Apache-2.0），随 APK 打进 assets，
+      #     首次识别时由 core/ocr_android.py 复制到 app 私有目录。fast 版约 2.4MB。
+      - name: Download Tesseract chi_sim data
+        run: |
+          mkdir -p assets/tessdata
+          curl -fsSL -o assets/tessdata/chi_sim.traineddata \
+            https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/chi_sim.traineddata
+          test -s assets/tessdata/chi_sim.traineddata
+          echo "chi_sim size: $(stat -c%s assets/tessdata/chi_sim.traineddata) bytes"
+
       # 3) 设置 Java 17（Gradle 8.x / AGP 要求 17；系统默认 JDK 11 会让构建失败）
       - name: Set up Java 17
         uses: actions/setup-java@v4

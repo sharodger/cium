@@ -29,19 +29,24 @@ source.dir = .
 source.entrypoint = main.py
 
 # 需要打进 apk 的源码类型与目录：主系统 + core + legal 子系统 + 更新包
-source.include_exts = py,png,jpg,kv,atlas,json,zip,txt,md,ttf
+source.include_exts = py,png,jpg,kv,atlas,json,zip,txt,md,ttf,traineddata
 source.exclude_dirs = build, bin, .buildozer, android, __pycache__, .git, selftest.py
 
 # 明确包含核心目录（p4a 会把这些目录的 py 打进 apk）
-source.include_patterns = core/*.py,legal/*.py,legal/ui/*.py,legal/dist/*.json,legal/dist/*.zip,assets/fonts/*.ttf
+source.include_patterns = core/*.py,legal/*.py,legal/ui/*.py,legal/dist/*.json,legal/dist/*.zip,assets/fonts/*.ttf,assets/tessdata/*.traineddata
 
 # 版本号
 version = 1.0.0
 version.code = 1
 
-# 依赖：python3 + kivy 固定版本；requests 下载更新包；plyer 调系统文件选择器（上传）
+# 依赖：python3 + kivy 固定版本；requests 下载更新包；plyer 调系统文件选择器（上传/识图选图）
+# pyjnius 调 Tesseract4Android 的 Java API（kivy 自带，显式列出便于排查）
 # 其余是 requests 移动端传递依赖
-requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer,plyer
+requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer,plyer,pyjnius
+
+# Android 原生依赖：Tesseract4Android 单线程版（JitPack 坐标）
+# p4a 会把本行注入 build.gradle 的 dependencies；中文识别另需 assets/tessdata/chi_sim.traineddata
+android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.9.0
 
 # 屏幕方向：工具型应用，竖屏为主
 orientation = portrait

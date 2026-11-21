@@ -8,15 +8,16 @@ app.py —— 业主维权AI助手 主系统入口（Kivy，PC/移动端共用�
   * 底栏两行：输入+发送 / 上传+粘贴+识图+文书+语音+旁听
   * 账号页：本地用户名+密码，首次注册、之后登录（忘记密码只能清数据重置）
   * 设置弹窗：账号信息 + 模块说明 + 能力状态 + 法规库更新 + 关于 + 隐私清除
-  * 识图弹窗：选材料类型 + 手动录入字段 -> 结构化表 + 证据要点，可复制
+  * 识图弹窗：电脑端可选图走 Tesseract 真识别自动填字段；无引擎降级为手动录入 -> 结构化表
 
 内核（route / playbook / templates / answer / _search_laws）保持原样，界面层只负责调用。
 线程模型：耗时操作放后台线程，UI 更新经 Clock.schedule_once 回主线程。
 
 登录是本机使用门槛，不是安全边界：账号哈希存在本地，忘记密码无法找回。
 上传边界：只调系统选择器、记录文件名，不读取图片/文档内容，不做 OCR。
-识图边界：只处理手动录入的文字（core/ocrkit.py 规则层），不读图、不自动识别；
-         真正的图像识别需 Tesseract 引擎（待办），届时可直接复用本规则层。
+识图边界：电脑端检测到 Tesseract 时调本地引擎识别图片（不联网、不上传），
+         识别出的文字交给 core/ocrkit.py 规则层整理成表；无引擎/无中文包/识别失败
+         一律明确降级为手动录入，绝不假装识别成功。
 """
 
 from __future__ import annotations
@@ -56,8 +57,15 @@ from core.attach import select_file as attach_select_file
 from core.evidence import detect_entities, recap_question
 from core.docgen import DocRequest, generate as generate_doc, describe_result as describe_doc
 from core.ocrkit import (available_types as ocr_types, DOC_SPECS as OCR_SPECS,
-                         parse_manual_entry, render_material_table,
-                         evidence_tip, degrade_notice)
+                         parse_manual_entry, render_material_table, evidence_tip)
+from core.ocr_engine import (detect as ocr_detect, recognize as ocr_recognize,
+                             extract_fields as ocr_extract_fields,
+                             pick_image as ocr_pick_image,
+                             to_entry_text as ocr_to_entry_text,
+                             engine_status_text as ocr_engine_status,
+                             install_hint as ocr_install_hint)
+from core import ocr_android
+IS_ANDROID = ocr_android.IS_ANDROID
 from device import DeviceManager
 from database import LegalDatabase
 from downloader import backend_name
@@ -364,7 +372,7 @@ KV = r"""
                     on_press: root.on_monitor()
 
 <OcrView>:
-    title: '识图辅助（手动录入）'
+    title: '识图辅助'
     size_hint: 0.95, 0.92
     auto_dismiss: True
     BoxLayout:
@@ -372,12 +380,21 @@ KV = r"""
         padding: dp(10)
         spacing: dp(6)
         Label:
-            text: root.degrade_hint
+            text: root.engine_hint
             font_size: '12sp'
-            color: 0.75, 0.30, 0.20, 1
+            color: 0.55, 0.35, 0.25, 1
             size_hint_y: None
-            height: dp(40)
+            height: dp(84)
             text_size: self.width, None
+        Button:
+            text: '选图识别（电脑端 Tesseract）'
+            size_hint_y: None
+            height: dp(38)
+            font_size: '13sp'
+            background_normal: ''
+            background_color: 0.20, 0.45, 0.85, 1
+            color: 1, 1, 1, 1
+            on_press: root.on_recognize()
         ScrollView:
             GridLayout:
                 cols: 1
@@ -876,30 +893,91 @@ class ChatScreen(Screen):
         DocView().open()
 
     def on_ocr(self) -> None:
-        """打开识图辅助弹窗（C 节规则层：手动录入 -> 结构化表，不读图）。"""
+        """打开识图弹窗：电脑端可 Tesseract 真识别，无引擎降级手动录入。"""
         OcrView().open()
 
 
 # ---------------------------------------------------------------------------
-# 识图辅助弹窗（C 节规则层：手动录入 -> 结构化表，不读图内容）
+# 识图辅助弹窗：PC 走命令行 Tesseract / 手机走 Tesseract4Android + 手动录入
 # ---------------------------------------------------------------------------
 
 class OcrView(ModalView):
-    """OCR 规则层界面：选材料类型 + 手动录入字段 -> 结构化表 + 证据要点，可复制。"""
+    """选图自动识别（有引擎）或手动录入（降级）-> 结构化表 + 证据要点，可复制。"""
 
     type_list = ListProperty(ocr_types())
     field_hint = StringProperty("")
     result_text = StringProperty("")
-    degrade_hint = StringProperty(degrade_notice())
+    engine_hint = StringProperty("")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # 两端引擎可用性判定不同：PC 查可执行文件，手机查 AAR + 中文包
+        self._engine = None if IS_ANDROID else ocr_detect()
+        self.engine_hint = (ocr_android.engine_status_text() if IS_ANDROID
+                            else ocr_engine_status(self._engine))
         self.on_type_change(self.ids.doc_type.text)
+
+    def _engine_ready(self) -> bool:
+        """当前平台是否具备真识别能力。"""
+        if IS_ANDROID:
+            return ocr_android.check_engine().available
+        return bool(self._engine and self._engine.usable)
 
     def on_type_change(self, doc_type: str) -> None:
         """切换材料类型时，列出该类应录入的字段，方便业主照着填。"""
         fields = OCR_SPECS.get(doc_type, [])
         self.field_hint = "应录入字段：" + "、".join(fields) if fields else ""
+
+    def on_recognize(self) -> None:
+        """选图 -> 后台线程识别 -> 回主线程填字段；耗时操作不卡界面。"""
+        if not self._engine_ready():
+            self.result_text = (ocr_android.engine_status_text() if IS_ANDROID
+                                else ocr_install_hint())
+            return
+        doc_type = self.ids.doc_type.text
+        if IS_ANDROID:
+            # Android 图库回调异步：拿到 URI 后再进后台识别
+            def _picked(uri):
+                if not uri:
+                    self.result_text = "已取消选图。"
+                else:
+                    self._start_recognize(uri, doc_type)
+            if not ocr_android.pick_image_uri(_picked):
+                self.result_text = "当前环境无法打开图库，请改用下方手动录入。"
+            return
+        # PC 文件选择器同步返回路径
+        path = ocr_pick_image()
+        if not path:
+            self.result_text = "没有选中图片，或当前环境无法打开文件选择器。"
+            return
+        self._start_recognize(path, doc_type)
+
+    def _start_recognize(self, image: str, doc_type: str) -> None:
+        """统一入口：显示等待提示，丢到后台线程，避免卡住界面。"""
+        self.result_text = "正在识别图片，请稍候……"
+        threading.Thread(target=self._do_recognize,
+                         args=(image, doc_type), daemon=True).start()
+
+    def _do_recognize(self, image: str, doc_type: str) -> None:
+        """后台线程：只做识别与字段提取，不碰界面控件。"""
+        result = (ocr_android.recognize(image) if IS_ANDROID
+                  else ocr_recognize(image, info=self._engine))
+        fields = ocr_extract_fields(doc_type, result.text) if result.ok else {}
+        Clock.schedule_once(lambda dt: self._apply_result(result, fields), 0)
+
+    def _apply_result(self, result, fields: dict[str, str]) -> None:
+        """回到主线程：手填值优先，识别结果只补空白，避免覆盖用户改过的内容。"""
+        if not result.ok:
+            self.result_text = result.error
+            return
+        merged = dict(fields)
+        merged.update(parse_manual_entry(self.ids.entry.text))
+        self.ids.entry.text = ocr_to_entry_text(merged)
+        preview = result.text[:160].replace("\n", " ")
+        tail = "…" if len(result.text) > 160 else ""
+        self.result_text = (f"识别完成（{result.lang}）。提取到 {len(fields)} 个字段，"
+                            "已填入下方录入框，可修改后点「整理成表」。\n"
+                            f"原文预览：{preview}{tail}")
 
     def build(self) -> None:
         """把录入的文本整理成 C2 结构化表 + C5 证据诊断。"""
@@ -999,10 +1077,19 @@ class SettingsView(ModalView):
                 "忘记密码无法找回，只能清除应用数据重置后重新注册。")
         section("模块说明", "A 财务核查 · B 物业合规 · C 规划违建 · D 行政程序\n"
                 "E 证据固定 · F 沟通博弈 · 其他：不确定时帮你引导归类")
+        if IS_ANDROID:
+            ocr_line = ("识图辅助：可用（手机端 Tesseract4Android 真识别，自动填字段）"
+                        if ocr_android.check_engine().available else
+                        "识图辅助：降级（本机缺 Tesseract 库或中文包，可手动录入）")
+        else:
+            eng = ocr_detect()
+            ocr_line = ("识图辅助：可用（电脑端 Tesseract 真识别，自动填字段，可手动改）"
+                        if eng.usable else
+                        "识图辅助：降级（未检测到 Tesseract 中文环境，可手动录入整理）")
         section("能力状态", "文字咨询：可用 · 关键数字复述核对：已启用\n"
                 "文书生成：可用（电脑出 Word，手机出可复制模板）\n"
-                "识图辅助：可用（底栏「识图」，手动录入字段后整理成表并比对；不读取图片）\n"
-                "语音转写、图片自动识别：后续功能，当前为降级模式，请用文字描述。\n"
+                + ocr_line + "\n"
+                "语音转写：后续功能，当前为降级模式，请用文字描述。\n"
                 "全程本地处理，不上传你的音频、图片与文书。")
 
         if app:

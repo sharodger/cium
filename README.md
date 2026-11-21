@@ -7,9 +7,9 @@ PC 端与移动端共用的本地优先工具。把业主的口语化描述拆�
 
 ---
 
-## 当前阶段：主系统骨架（已完成）
+## 当前阶段：PC 端 Tesseract 真识别（本次新增）
 
-本次只完成**主系统搭建**，其它功能按增量方式后续逐个加入。
+按增量方式逐个加入功能；本次只做 PC 端图片真识别，**Android 端仍为手动录入降级**，后续再接。
 
 ### 已实现
 - **Kivy 主界面**：顶部状态栏（法规库版本、设备标识、下载后端）、中部对话时间线、底部输入区、设置入口。
@@ -19,13 +19,15 @@ PC 端与移动端共用的本地优先工具。把业主的口语化描述拆�
   - `app.py::answer()`：路由 → 本地法规检索 → 八段式组装，纯规则，不调用大模型。
 - **法规库子系统**（`legal/`）：复用已跑通的模块，支持版本更新、SQLite 存储、全文检索、设备标识。
 - **设置弹窗**：挂载法规库更新面板（检查/下载/应用/回滚）、隐私清除、关于。
+- **识图辅助**：`core/ocrkit.py` 规则层 + `core/ocr_engine.py` 本地 Tesseract 真识别；电脑端选图自动提取字段，无引擎明确降级为手动录入。
+- 其它已完成：五块回答模板、模块首页、本地登录、豆包风浅色 UI、上传/复制粘贴、行为规则、文书生成（电脑出 docx / 手机出模板）。
 
 ### 后续功能入口（本次只占位，未实现）
 | 功能 | 入口位置 | 当前行为 |
 |---|---|---|
 | 语音对话 | 底部「语音」按钮 `RootWidget.on_voice()` | 提示"后续功能"，后续接本地 Vosk 离线转写 |
 | 旁听模式 | 底部「旁听」按钮 `RootWidget.on_monitor()` | 提示"后续功能" |
-| 图片识别 | 后续在输入区加按钮 | 后续接本地 Tesseract OCR |
+| 图片识别 | 底栏「识图」 | 电脑端已接本地 Tesseract 真识别；手机端暂为手动录入降级 |
 | 文书生成 | 后续在输出模块加 | PC 用 python-docx，移动端降级 zipfile+XML/纯文本 |
 | 本地大模型推理 | 后续替换 `answer()` 的推理部分 | PC 可接 Ollama，移动端规则检索 |
 
@@ -39,10 +41,16 @@ PC 端与移动端共用的本地优先工具。把业主的口语化描述拆�
 ├── 业主维权AI助手.py       跨平台命令行入口
 ├── main.py                Android 打包入口（Buildozer 默认入口）
 ├── app.py                 主系统实现（Kivy App + 内核编排，入口调用它）
-├── selftest.py            主系统自测（14 项）
+├── selftest.py            主系统自测（79 项）
 ├── core/
 │   ├── router.py          路由引擎（六大模块打分 -> 路由标签）
-│   └── templates.py       八段式输出模板
+│   ├── templates.py       八段式输出模板
+│   ├── ocrkit.py          OCR 规则层（字段表/交叉比对/诊断/脱敏）
+│   ├── ocr_engine.py      PC 端 Tesseract 真识别（检测/调用/提取/降级）
+│   ├── evidence.py        行为规则与字段清单
+│   ├── docgen.py          文书生成（电脑 docx / 手机模板）
+│   ├── auth.py            本机账号
+│   └── attach.py          系统文件选择器封装
 ├── legal/                 法规库子系统（原样复用，内部代码未改）
 │   ├── device.py          设备标识与跨设备检测
 │   ├── database.py        SQLite 法规库
@@ -68,7 +76,7 @@ PC 端与移动端共用的本地优先工具。把业主的口语化描述拆�
 pip install kivy requests pyinstaller
 
 # 自测（不需要窗口，自动用 mock GL 后端）
-python selftest.py          # 14/14 通过
+python selftest.py          # 79/79 通过
 
 # 运行应用（需有图形环境）
 # 方式一：Windows 直接双击「业主维权AI助手.bat」（推荐）
@@ -83,6 +91,20 @@ python app.py
 > **双击报 "python is not recognized" 怎么办**：`业主维权AI助手.bat` 已内置探测，无需手动配 PATH。
 > 若三个候选都没有装 kivy，会提示 `No Python with kivy found`，此时在命令行装依赖即可：
 > `pip install kivy requests`。若系统 `py` 启动器指向损坏的 Python，脚本会自动跳过它。
+
+## PC 端图片真识别（Tesseract）
+
+底栏「识图」弹窗两条路径：
+- **有引擎**：点「选图识别」→ 选本机图片 → 后台线程调本地 Tesseract → 自动提取字段填进录入框 → 可修改后点「整理成表」。
+- **无引擎**：顶部明确显示降级说明，手动录入照常用；**绝不假装已识别**。
+
+首次启用（Windows，任选一种）：
+1. 管理员 PowerShell 执行 `winget install UB-Mannheim.TesseractOCR`，安装向导里勾选 **Chinese Simplified (chi_sim)** 语言包；
+2. 或把 `tesseract.exe` 连同 `tessdata/chi_sim.traineddata` 放到项目的 `tools/tesseract/` 目录；
+3. 或设环境变量 `TESSERACT_CMD` 指向 `tesseract.exe`。
+
+装完重启应用，弹窗顶部显示「Tesseract 已就绪」即生效。识别全程本地进行，**图片不上传**。
+自测用模拟引擎验证了调用命令、成功/失败/降级路径（79/79）；「真图出字」需你在本机装好引擎后实测。
 
 ## Android 打包
 

@@ -378,6 +378,115 @@ def main() -> int:
     check("识图整理成表", "字段名" in ov.result_text and "待核实" in ov.result_text,
           ov.result_text[:60])
 
+    # ---------- 11. PC 端 Tesseract 真识别（模拟引擎，不依赖本机安装） ----------
+    import subprocess
+    from core import ocr_engine as oe
+
+    cmd = oe.build_command("tesseract.exe", "C:/tmp/a.png")
+    check("真识别命令构造", cmd[0] == "tesseract.exe" and cmd[2] == "stdout"
+          and "chi_sim+eng" in cmd and "--psm" in cmd, str(cmd))
+
+    norm = oe.normalize_text("金额：￥３，５００元\n日期：２０２６年３月５日")
+    ef = oe.extract_fields("银行流水/对账单", norm)
+    check("OCR全角归一", "3,500" in norm, norm[:60])
+    check("OCR标签值清洗", ef.get("金额") == "3500"
+          and ef.get("交易日期") == "2026-03-05", str(ef))
+    ef2 = oe.extract_fields("整改书/决定书", "某某决定〔2026〕第12号")
+    check("OCR文号提取", "〔2026〕第12号" in ef2.get("文号", ""), str(ef2))
+    check("OCR不猜缺失字段", "金额" not in oe.extract_fields("发票/收据", "今收到物业费"))
+
+    fake_png = Path(tempfile.gettempdir()) / f"ocr_{uuid.uuid4().hex[:8]}.png"
+    fake_png.write_bytes(b"fake-image")
+    fake_info = oe.EngineInfo(True, "fake-tesseract", "tesseract 5.3.0",
+                              ["eng", "chi_sim"], "测试")
+    check("引擎状态话术", "已就绪" in oe.engine_status_text(fake_info))
+    check("无引擎明确降级", not oe.recognize(str(fake_png), info=oe.EngineInfo()).ok)
+    eng_only = oe.EngineInfo(True, "fake", "v", ["eng"], "测试")
+    check("缺中文包降级", "chi_sim" in oe.recognize(str(fake_png), info=eng_only).error)
+
+    called: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        called.append(args)
+        return subprocess.CompletedProcess(
+            args, 0, stdout="户名: 张三\n金额: ￥9,800元\n交易日期: 2026-03-05\n", stderr="")
+
+    with patch.object(oe.subprocess, "run", side_effect=fake_run):
+        got = oe.recognize(str(fake_png), info=fake_info)
+    check("真识别调用成功", got.ok and "张三" in got.text and got.version == "tesseract 5.3.0",
+          got.text[:40])
+    check("识别命令带中文包", bool(called) and "chi_sim+eng" in called[0], str(called[:1]))
+
+    with patch.object(oe.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="Error opening data file")):
+        bad = oe.recognize(str(fake_png), info=fake_info)
+    check("识别失败不虚构", not bad.ok and "报错" in bad.error, bad.error)
+
+    with patch.object(oe.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 0, stdout="  ", stderr="")):
+        empty = oe.recognize(str(fake_png), info=fake_info)
+    check("空识别结果降级", not empty.ok and "没识别出文字" in empty.error, empty.error)
+
+    # 引擎检测：假路径 + 假版本/语言输出，验证 found/chinese/version 解析
+    fake_exe = Path(tempfile.gettempdir()) / f"fake_tess_{uuid.uuid4().hex[:8]}.exe"
+    fake_exe.write_text("x")
+
+    def fake_cli(exe, args, timeout=8):
+        if "--version" in args:
+            return subprocess.CompletedProcess(args, 0, "tesseract 5.3.0\n", "")
+        return subprocess.CompletedProcess(args, 0, "",
+                                           "List of available languages (2):\neng\nchi_sim\n")
+
+    with patch.object(oe, "_candidates", return_value=[(str(fake_exe), "测试")]), \
+         patch.object(oe, "_run_cli", side_effect=fake_cli):
+        detected = oe.detect()
+    check("引擎检测解析", detected.found and detected.chinese
+          and "5.3.0" in detected.version, str(detected))
+
+    # 界面接线：结果回填（手填优先）+ 无引擎点击给安装说明
+    ov2 = app_mod.OcrView()
+    ov2.ids.entry.text = "金额：999"
+
+    class FakeResult:
+        ok = True
+        text = "户名: 张三\n金额: 3500"
+        lang = "chi_sim+eng"
+
+    ov2._apply_result(FakeResult(), {"金额": "3500", "户名": "张三"})
+    check("识别结果回填手填优先", "金额：999" in ov2.ids.entry.text
+          and "户名：张三" in ov2.ids.entry.text, ov2.ids.entry.text)
+    ov3 = app_mod.OcrView()
+    ov3._engine = oe.EngineInfo()
+    ov3.on_recognize()
+    check("无引擎点击给安装说明", "降级" in ov3.result_text and "winget" in ov3.result_text,
+          ov3.result_text[:60])
+
+    # ---------- 12. Android 桥接层（本机非 Android，验证安全降级） ----------
+    from core import ocr_android as oa
+    check("Android模块PC可安全导入", oa.IS_ANDROID is False)
+    ares = oa.recognize("irrelevant.png")
+    check("Android识别在PC明确降级", not ares.ok and "电脑端" in ares.error, ares.error)
+    ainfo = oa.check_engine()
+    check("Android引擎检查不误报", ainfo.available is False, str(ainfo))
+    check("Android状态行不虚构", "降级" in oa.engine_status_text()
+          or "电脑端" in oa.engine_status_text())
+    # 界面在 PC 上仍按 PC 引擎状态显示，不因引入手机模块而错乱
+    check("界面未误判为手机", app_mod.IS_ANDROID is False)
+    check("界面引擎状态PC话术", "Tesseract" in ov.engine_hint or "降级" in ov.engine_hint,
+          ov.engine_hint[:60])
+    # 语言包读取机制：文件系统路径优先（与真机字体同机制），用临时目录验证优先分支
+    import tempfile as _tf
+    fake_root = Path(_tf.mkdtemp())
+    (fake_root / "assets" / "tessdata").mkdir(parents=True)
+    (fake_root / "assets" / "tessdata" / "chi_sim.traineddata").write_bytes(b"x" * 2000)
+    real_file = oa.__file__
+    try:
+        oa.__file__ = str(fake_root / "core" / "ocr_android.py")
+        got = oa._asset_bytes()
+        check("语言包文件系统读取", len(got) == 2000, str(len(got)))
+    finally:
+        oa.__file__ = real_file
+
     # ---------- 汇总 ----------
     print("\n" + "=" * 58)
     passed = sum(1 for _, ok, _ in results if ok)
