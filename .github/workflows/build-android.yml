@@ -27,20 +27,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2) 设置 Java 17（Gradle 8.x / AGP 要求 17；系统默认 JDK 11 会让构建失败）
+      # 2) 下载开源中文字体（Apache-2.0），解决 Android 上中文显示方块
+      - name: Download Chinese font
+        run: |
+          mkdir -p assets/fonts
+          curl -fsSL -o assets/fonts/DroidSansFallbackFull.ttf \
+            https://raw.githubusercontent.com/isis-project/isis-fonts/master/DroidSansFallbackFull.ttf
+          curl -fsSL -o assets/fonts/DroidSansFallbackFull.LICENSE \
+            https://raw.githubusercontent.com/isis-project/isis-fonts/master/MODULE_LICENSE_APACHE2
+          curl -fsSL -o assets/fonts/DroidSansFallbackFull.NOTICE \
+            https://raw.githubusercontent.com/isis-project/isis-fonts/master/NOTICE
+          test -s assets/fonts/DroidSansFallbackFull.ttf
+
+      # 3) 设置 Java 17（Gradle 8.x / AGP 要求 17；系统默认 JDK 11 会让构建失败）
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # 3) 设置 Python（3.11 对 p4a 兼容性好；3.13 部分 recipe 未适配）
+      # 4) 设置 Python（3.11 对 p4a 兼容性好；3.13 部分 recipe 未适配）
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 4) 安装 Linux 系统依赖（buildozer/p4a 官方要求）
+      # 5) 安装 Linux 系统依赖（buildozer/p4a 官方要求）
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -49,17 +61,17 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 \
             cmake libffi-dev libssl-dev python3-pip
 
-      # 5) 安装 buildozer 与 Cython（p4a 需要 Cython<3）
+      # 6) 安装 buildozer 与 Cython（p4a 需要 Cython<3）
       - name: Install buildozer
         run: |
           python -m pip install --upgrade pip
           pip install "buildozer" "cython<3"
 
-      # 6) 复制配置到项目根目录（buildozer 默认读根目录的 buildozer.spec）
+      # 7) 复制配置到项目根目录（buildozer 默认读根目录的 buildozer.spec）
       - name: Prepare buildozer.spec
         run: cp android/buildozer.spec ./buildozer.spec
 
-      # 7) 缓存 SDK/NDK 与构建产物，加速后续构建（首次仍要下载数 GB）
+      # 8) 缓存 SDK/NDK 与构建产物，加速后续构建（首次仍要下载数 GB）
       - name: Cache buildozer downloads
         uses: actions/cache@v4
         with:
@@ -68,11 +80,11 @@ jobs:
             .buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('android/buildozer.spec') }}
 
-      # 8) 构建 debug APK（首次约 20-40 分钟）
+      # 9) 构建 debug APK（首次约 20-40 分钟）
       - name: Build APK
         run: buildozer -v android debug
 
-      # 9) 上传 APK 供下载（artifact 默认保留 90 天，这里设 30 天）
+      # 10) 上传 APK 供下载（artifact 默认保留 90 天，这里设 30 天）
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

@@ -29,11 +29,11 @@ source.dir = .
 source.entrypoint = main.py
 
 # 需要打进 apk 的源码类型与目录：主系统 + core + legal 子系统 + 更新包
-source.include_exts = py,png,jpg,kv,atlas,json,zip,txt,md
+source.include_exts = py,png,jpg,kv,atlas,json,zip,txt,md,ttf
 source.exclude_dirs = build, bin, .buildozer, android, __pycache__, .git, selftest.py
 
 # 明确包含核心目录（p4a 会把这些目录的 py 打进 apk）
-source.include_patterns = core/*.py,legal/*.py,legal/ui/*.py,legal/dist/*.json,legal/dist/*.zip
+source.include_patterns = core/*.py,legal/*.py,legal/ui/*.py,legal/dist/*.json,legal/dist/*.zip,assets/fonts/*.ttf
 
 # 版本号
 version = 1.0.0

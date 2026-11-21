@@ -34,6 +34,7 @@ sys.path.insert(0, str(LEGAL_DIR))   # 让 legal 子系统平级导入生效（�
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.core.text import LabelBase
 from kivy.lang import Builder
 from kivy.properties import ObjectProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
@@ -150,6 +151,12 @@ KV = r"""
                 text: '关闭'
                 on_press: root.dismiss()
 """
+
+# Kivy 默认 Roboto 字体不含中文字形，手机上会显示方块。
+# 若构建流程已放入开源中文字体，就覆盖默认字体；没有时保持原样（降级不崩溃）。
+FONT_FILE = HERE / "assets" / "fonts" / "DroidSansFallbackFull.ttf"
+if FONT_FILE.exists():
+    LabelBase.register(name="Roboto", fn_regular=str(FONT_FILE))
 
 Builder.load_string(KV)
 
