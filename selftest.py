@@ -109,6 +109,34 @@ def main() -> int:
     root.on_monitor()
     check("旁听入口占位", "后续功能" in root._history[-1][1])
 
+    # ---------- 6. 五块模板与要点补漏 ----------
+    from core.templates import BriefSections, render_brief
+    from core.playbook import pick
+
+    brief = render_brief(BriefSections(
+        route_label="[路由: A→B]", headline="测试结论",
+        judgments=["判断一"], actions=["步骤一"],
+        evidence="证据", question="一个问题？", include_disclaimer=True,
+    ))
+    brief_needed = ["[路由: A→B]", "一句话结论", "关键判断", "现在就做",
+                    "要留的证据", "一个问题", DISCLAIMER]
+    check("五块模板齐全", all(n in brief for n in brief_needed))
+
+    real_question = "业委会多年没有公布公共开支和收益怎么办"
+    codes, books = pick(real_question, route(real_question).codes)
+    check("要点补漏财务优先", codes[0] == "A", str(codes))
+    check("要点内容非空", bool(books[0].headline and books[0].actions))
+
+    new_answer = a.answer(real_question)
+    check("新回答用五块结构", "一句话结论" in new_answer and "现在就做" in new_answer)
+    check("新回答无旧套话", "主系统已完成问题分类" not in new_answer)
+    check("追问是人话", "这是哪一类第几项资料" not in new_answer and "一个问题" in new_answer)
+
+    from kivy.uix.label import Label
+    tr = root.ids.transcript
+    check("对话区可滚动", isinstance(tr, Label) and tr.size_hint_y is None,
+          f"{type(tr).__name__} {tr.size_hint_y}")
+
     # ---------- 汇总 ----------
     print("\n" + "=" * 58)
     passed = sum(1 for _, ok, _ in results if ok)

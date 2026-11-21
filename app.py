@@ -41,7 +41,8 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.modalview import ModalView
 
 from core.router import MODULE_NAMES, route
-from core.templates import AnswerSections, render
+from core.playbook import pick as pick_playbook
+from core.templates import AnswerSections, render, BriefSections, render_brief
 from device import DeviceManager
 from database import LegalDatabase
 from downloader import backend_name
@@ -91,13 +92,23 @@ KV = r"""
     ScrollView:
         id: transcript_view
         size_hint_y: 1
-        TextInput:
+        bar_width: dp(4)
+        canvas.before:
+            Color:
+                rgba: 0.99, 0.99, 0.99, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        Label:
             id: transcript
-            readonly: True
-            multiline: True
-            font_size: '14sp'
             text: root.transcript
-            background_color: 0.99, 0.99, 0.99, 1
+            font_size: '14sp'
+            color: 0.12, 0.12, 0.12, 1
+            size_hint_y: None
+            height: self.texture_size[1] + dp(20)
+            text_size: self.width - dp(20), None
+            halign: 'left'
+            valign: 'top'
 
     BoxLayout:
         size_hint_y: None
@@ -340,41 +351,41 @@ class OwnerRightsApp(App):
     def answer(self, text: str) -> str:
         """
         内核主流程（后台线程调用）：
-          路由 -> 法规检索 -> 八段式模板组装。
-        主系统骨架版本只用规则与本地法规库，不调用大模型。
+          路由 -> 要点补漏重排 -> 法规检索 -> 五块模板组装。
+        旧八段式接口（AnswerSections/render）保留不动，供自测与后续复用。
         """
-        # 1) 路由
+        # 1) 路由 + 要点补漏重排（把真正相关的模块排到前面）
         rr = route(text)
-        names = "、".join(MODULE_NAMES.get(c, c) for c in rr.codes)
+        codes, books = pick_playbook(text, rr.codes)
+        label = ("[路由: 综合]" if codes == ["综合"]
+                 else "[路由: " + "→".join(codes) + "]")
 
         # 2) 法规检索（LIKE 兜底，规避中文 FTS 分词问题）
         laws = _search_laws(self.db, text, limit=3)
 
-        # 3) 组装八段式输出
-        basis_lines = []
-        for law in laws:
-            loc = " · ".join(p for p in (law.law_name, law.part, law.article) if p)
-            basis_lines.append(f"{loc}：{law.content[:60]}")
-        basis = "\n   ".join(basis_lines) if basis_lines else "待核实：请结合现行法规与当地规定。"
+        # 3) 法规命中时作为依据带出；空库明确标注待核实（不编造条款）
+        judgments: list[str] = []
+        if books:
+            judgments.extend(books[0].judgments)
+        if laws:
+            refs = []
+            for law in laws:
+                loc = " · ".join(p for p in (law.law_name, law.part, law.article) if p)
+                refs.append(loc)
+            judgments.append("相关法规：" + "；".join(refs) + "（具体条款以现行文本为准）")
+        else:
+            judgments.append("具体法规条款待核实：请结合现行法规与当地规定。")
 
-        actions = [
-            "梳理事实时间线与相关方。",
-            "按路由模块准备对应材料与文书。",
-            "对外沟通一律书面留痕并注明答复期限。",
-        ]
-
-        sections = AnswerSections(
-            route_label=rr.label,
-            intent=f"已收到您的问题，命中模块：{names}。",
-            conclusion="主系统已完成问题分类与法规匹配；具体法律结论需结合证据与现行法规判断。",
-            basis=basis,
-            actions=actions,
-            evidence_docs="请保留原图、连续拍摄与带时间水印版本；送达优先书面并留回执。",
-            risks="勿传播未经核实的信息，勿采取过激或违法方式。",
-            next_question="这是哪一类第几项资料？",
+        primary = books[0] if books else None
+        return render_brief(BriefSections(
+            route_label=label,
+            headline=primary.headline if primary else "",
+            judgments=judgments,
+            actions=primary.actions if primary else [],
+            evidence=primary.evidence if primary else "",
+            question=primary.question if primary else "",
             include_disclaimer=True,
-        )
-        return render(sections)
+        ))
 
 
 def _search_laws(db: LegalDatabase, text: str, limit: int = 3) -> list:

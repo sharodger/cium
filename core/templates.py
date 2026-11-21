@@ -69,6 +69,42 @@ def render(sections: AnswerSections) -> str:
     return "\n".join(lines)
 
 
+@dataclass
+class BriefSections:
+    """五块结构的容器（手机端精简输出）。空值表示该块不输出。"""
+    route_label: str = ""                              # 路由标签
+    headline: str = ""                                 # 一句话结论
+    judgments: list[str] = field(default_factory=list) # 关键判断
+    actions: list[str] = field(default_factory=list)   # 现在就做
+    evidence: str = ""                                 # 要留的证据
+    question: str = ""                                 # 一个问题
+    include_disclaimer: bool = False                   # 免责声明
+
+
+def render_brief(sections: BriefSections) -> str:
+    """把五块内容组装成适合手机阅读的文本（旧的 render 保持不动）。"""
+    lines: list[str] = []
+    if sections.route_label:
+        lines.append(sections.route_label)
+    if sections.headline:
+        lines.append("一句话结论：" + sections.headline)
+    if sections.judgments:
+        lines.append("关键判断：")
+        for i, item in enumerate(sections.judgments, 1):
+            lines.append(f"  {i}. {item}")
+    if sections.actions:
+        lines.append("现在就做：")
+        for i, item in enumerate(sections.actions, 1):
+            lines.append(f"  {i}. {item}")
+    if sections.evidence:
+        lines.append("要留的证据：" + sections.evidence)
+    if sections.question:
+        lines.append("一个问题：" + sections.question)
+    if sections.include_disclaimer:
+        lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     demo = AnswerSections(
         route_label="[路由: A→E]",
