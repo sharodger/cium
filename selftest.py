@@ -99,15 +99,29 @@ def main() -> int:
     empty_answer = a.answer("公共收益怎么用")
     check("空库降级提示", "待核实" in empty_answer)
 
-    # ---------- 5. UI 构建 + 占位 ----------
+    # ---------- 5. UI 构建 + 占位（新版：首页/对话页/气泡） ----------
+    from kivy.clock import Clock
     root = a.build()
-    check("主界面构建", sorted(root.ids) == ["entry", "transcript", "transcript_view"],
-          str(sorted(root.ids)))
-    before = len(root._history)
-    root.on_voice()
-    check("语音入口占位", len(root._history) == before + 1 and "后续功能" in root._history[-1][1])
-    root.on_monitor()
-    check("旁听入口占位", "后续功能" in root._history[-1][1])
+    Clock.tick()  # 让首页卡片的 schedule_once 落地
+    check("首页与对话页就绪", root.screen_names == ["home", "chat"] and root.current == "home",
+          str(root.screen_names))
+    home = a.home_screen
+    chat = a.chat_screen
+    check("模块卡片数量", len(home.ids.module_grid.children) == 7,
+          str(len(home.ids.module_grid.children)))
+
+    # 首页点卡片 -> 带引导问题进对话
+    home._build_cards()
+    home._enter("测试引导问题", "财务核查")
+    check("首页卡片带问题进对话", root.current == "chat"
+          and chat.ids.entry.text == "测试引导问题" and chat.module_title == "财务核查",
+          f"{root.current} / {chat.ids.entry.text}")
+
+    before = len(chat._history)
+    chat.on_voice()
+    check("语音入口占位", len(chat._history) == before + 1 and "后续功能" in chat._history[-1][1])
+    chat.on_monitor()
+    check("旁听入口占位", "后续功能" in chat._history[-1][1])
 
     # ---------- 6. 五块模板与要点补漏 ----------
     from core.templates import BriefSections, render_brief
@@ -132,10 +146,32 @@ def main() -> int:
     check("新回答无旧套话", "主系统已完成问题分类" not in new_answer)
     check("追问是人话", "这是哪一类第几项资料" not in new_answer and "一个问题" in new_answer)
 
-    from kivy.uix.label import Label
-    tr = root.ids.transcript
-    check("对话区可滚动", isinstance(tr, Label) and tr.size_hint_y is None,
-          f"{type(tr).__name__} {tr.size_hint_y}")
+    from kivy.core.window import Window
+    check("软键盘顶起输入框", Window.softinput_mode == "below_target",
+          str(Window.softinput_mode))
+
+    # 气泡：用户/助手分色，靠左右两侧
+    chat._history = [("user", "我的问题"), ("assistant", "助手回答")]
+    chat._render_transcript()
+    from kivy.factory import Factory  # noqa: F401  触发 Factory 注册表
+    from app import ChatBubble
+    bubbles = [c for row in chat.ids.bubbles.children for c in row.children
+               if isinstance(c, ChatBubble)]
+    check("气泡数量与分色", len(bubbles) == 2
+          and {b.role for b in bubbles} == {"user", "assistant"},
+          str([b.role for b in bubbles]))
+    check("对话区可滚动", chat.ids.transcript_view is not None)
+
+    # 设置分区：账号区提示未启用 + 法规库面板 + 更新时间显示
+    sv = app_mod.SettingsView(app_ref=a)
+    sv.build_sections()
+    from legal.ui.update_panel import UpdatePanel as UP
+    check("设置分区含更新面板", any(isinstance(w, UP) for w in sv.ids.panel_host.children))
+    a.update_manager.db.set_meta("last_update_at", "2026-11-20T05:39:26+00:00")
+    panel = next(w for w in sv.ids.panel_host.children if isinstance(w, UP))
+    panel._refresh_version()
+    check("版本显示含完整日期", "2026-11-20 05:39" in panel.version_label,
+          panel.version_label)
 
     # ---------- 汇总 ----------
     print("\n" + "=" * 58)

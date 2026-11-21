@@ -177,8 +177,16 @@ class UpdatePanel(BoxLayout):
 
     def _refresh_version(self) -> None:
         stats = self.manager.db.stats()
+        # 日期取自数据库 meta 的 last_update_at（已有字段），只做格式化显示。
+        # 把 ISO 时间转成"YYYY-MM-DD HH:MM"，避免时间戳截断后不完整。
+        raw = (stats.get("last_update_at") or "").strip()
+        when = ""
+        if raw:
+            text = raw.replace("T", " ")
+            when = text[:16]  # 2026-11-20 05:39:26+00:00 -> 2026-11-20 05:39
         self.version_label = (f"本地版本：v{stats['law_version']} · "
-                              f"{stats['law_count']} 条条文")
+                              f"{stats['law_count']} 条条文"
+                              + (f" · 更新于 {when}" if when else ""))
 
     def _on_status(self, status: UpdateStatus, msg: str) -> None:
         """来自后台线程的回调 -> 排到主线程更新 UI。"""
