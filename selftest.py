@@ -99,12 +99,37 @@ def main() -> int:
     empty_answer = a.answer("公共收益怎么用")
     check("空库降级提示", "待核实" in empty_answer)
 
-    # ---------- 5. UI 构建 + 占位（新版：首页/对话页/气泡） ----------
+    # ---------- 5. 账号页 + UI 构建 + 占位 ----------
     from kivy.clock import Clock
     root = a.build()
-    Clock.tick()  # 让首页卡片的 schedule_once 落地
-    check("首页与对话页就绪", root.screen_names == ["home", "chat"] and root.current == "home",
+    Clock.tick()  # 让首屏判定的 schedule_once 落地
+    check("三个页面就绪", root.screen_names == ["auth", "home", "chat"],
           str(root.screen_names))
+    check("未注册先到账号页", root.current == "auth", str(root.current))
+
+    # 模拟首次注册：走 AuthScreen.submit
+    auth_screen = a.auth_screen
+    auth_screen.prepare(register_mode=True)
+    auth_screen.ids.user.text = "测试业主"
+    auth_screen.ids.pwd.text = "mypassword"
+    auth_screen.submit()
+    check("注册后进入首页", root.current == "home" and a.auth.is_registered(),
+          f"{root.current} / 已注册={a.auth.is_registered()}")
+    check("密码不落明文", "mypassword" not in a.auth.path.read_text(encoding="utf-8"))
+
+    # 模拟重新登录：错密码拦截，对密码放行
+    a.root_widget.current = "auth"
+    auth_screen.prepare(register_mode=False, username="测试业主")
+    auth_screen.ids.pwd.text = "wrong"
+    auth_screen.submit()
+    check("错误密码被拦截", root.current == "auth" and "错误" in auth_screen.message,
+          auth_screen.message)
+    auth_screen.ids.pwd.text = "mypassword"
+    auth_screen.submit()
+    check("正确密码进首页", root.current == "home", str(root.current))
+
+    # 让首页卡片构建落地
+    Clock.tick()
     home = a.home_screen
     chat = a.chat_screen
     check("模块卡片数量", len(home.ids.module_grid.children) == 7,

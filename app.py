@@ -5,13 +5,14 @@ app.py —— 业主维权AI助手 主系统入口（Kivy，PC/移动端共用�
 界面（本版重做）：
   * 首页：按模块分类的卡片，点卡片带引导问题进对话；"其他/不确定"做引导
   * 对话页：用户/助手气泡分色区隔，可滚动
-  * 设置弹窗：账号区（登录功能下一步接入）+ 法规库更新 + 关于 + 隐私清除
+  * 账号页：本地用户名+密码，首次注册、之后登录（忘记密码只能清数据重置）
+  * 设置弹窗：账号信息 + 模块说明 + 法规库更新 + 关于 + 隐私清除
   * 顶部状态栏、底部工具按钮，统一卡片式工具软件观感
 
 内核（route / playbook / templates / answer / _search_laws）保持原样，界面层只负责调用。
 线程模型：耗时操作放后台线程，UI 更新经 Clock.schedule_once 回主线程。
 
-登录（用户名+密码）为下一步功能，本版账号区会显示"尚未启用"，不假装已实现。
+登录是本机使用门槛，不是安全边界：账号哈希存在本地，忘记密码无法找回。
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from kivy.uix.screenmanager import Screen, ScreenManager
 from core.router import MODULE_NAMES, route
 from core.playbook import pick as pick_playbook
 from core.templates import AnswerSections, render, BriefSections, render_brief
+from core.auth import LocalAuth, AuthError
 from device import DeviceManager
 from database import LegalDatabase
 from downloader import backend_name
@@ -77,6 +79,84 @@ MODULE_CARDS = [
 # ---------------------------------------------------------------------------
 
 KV = r"""
+<AuthScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: dp(20), dp(16)
+        spacing: dp(10)
+        canvas.before:
+            Color:
+                rgba: 0.97, 0.98, 0.99, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        Widget:
+            size_hint_y: 0.15
+        Label:
+            text: '业主维权AI助手'
+            font_size: '22sp'
+            bold: True
+            color: 0.12, 0.30, 0.48, 1
+            size_hint_y: None
+            height: dp(40)
+        Label:
+            text: root.mode_hint
+            font_size: '13sp'
+            color: 0.35, 0.38, 0.42, 1
+            size_hint_y: None
+            height: dp(30)
+        BoxLayout:
+            size_hint_y: None
+            height: dp(44)
+            Label:
+                text: '用户名'
+                size_hint_x: 0.28
+                font_size: '14sp'
+                color: 0.2, 0.2, 0.2, 1
+            TextInput:
+                id: user
+                multiline: False
+                font_size: '15sp'
+        BoxLayout:
+            size_hint_y: None
+            height: dp(44)
+            Label:
+                text: '密码'
+                size_hint_x: 0.28
+                font_size: '14sp'
+                color: 0.2, 0.2, 0.2, 1
+            TextInput:
+                id: pwd
+                multiline: False
+                password: True
+                font_size: '15sp'
+        Button:
+            id: primary
+            text: root.primary_text
+            size_hint_y: None
+            height: dp(48)
+            background_color: 0.12, 0.30, 0.48, 1
+            color: 1, 1, 1, 1
+            on_press: root.submit()
+        Label:
+            id: message
+            text: root.message
+            font_size: '12sp'
+            color: 0.75, 0.25, 0.25, 1
+            size_hint_y: None
+            height: dp(40)
+        Label:
+            text: '提示：本机账号仅作使用门槛，忘记密码无法找回，只能清除应用数据重置。'
+            font_size: '11sp'
+            color: 0.45, 0.45, 0.45, 1
+            size_hint_y: None
+            height: dp(46)
+            halign: 'left'
+            valign: 'top'
+            text_size: self.width, None
+        Widget:
+            size_hint_y: 0.25
+
 <ChatBubble>:
     orientation: 'vertical'
     size_hint_y: None
@@ -258,6 +338,48 @@ Builder.load_string(KV)
 
 
 # ---------------------------------------------------------------------------
+# 登录 / 注册页
+# ---------------------------------------------------------------------------
+
+class AuthScreen(Screen):
+    """本地账号页：首次注册，之后登录。成功切到首页。"""
+
+    mode_hint = StringProperty("")
+    primary_text = StringProperty("")
+    message = StringProperty("")
+    is_register_mode = False
+
+    def prepare(self, register_mode: bool, username: str = "") -> None:
+        self.is_register_mode = register_mode
+        self.mode_hint = ("首次使用，请设置用户名和密码" if register_mode
+                          else f"欢迎回来，{username}，请输入密码登录")
+        self.primary_text = "注册并进入" if register_mode else "登录"
+        self.message = ""
+        self.ids.user.text = "" if register_mode else username
+        self.ids.pwd.text = ""
+        # 注册时用户名可编辑；登录时锁定为已注册用户名
+        self.ids.user.disabled = not register_mode
+
+    def submit(self) -> None:
+        app = App.get_running_app()
+        auth: LocalAuth = app.auth
+        username = self.ids.user.text.strip()
+        password = self.ids.pwd.text
+        try:
+            if self.is_register_mode:
+                auth.register(username, password)
+            else:
+                if not auth.verify(username, password):
+                    self.message = "用户名或密码错误，请重试"
+                    return
+        except AuthError as e:
+            self.message = str(e)
+            return
+        self.message = ""
+        self.manager.current = "home"
+
+
+# ---------------------------------------------------------------------------
 # 首页
 # ---------------------------------------------------------------------------
 
@@ -414,7 +536,7 @@ class ChatScreen(Screen):
 # ---------------------------------------------------------------------------
 
 class SettingsView(ModalView):
-    """设置弹窗：账号区（未启用）+ 法规库更新 + 关于 + 隐私清除。"""
+    """设置弹窗：账号信息 + 模块说明 + 法规库更新 + 关于 + 隐私清除。"""
 
     app_ref = ObjectProperty(None, allownone=True)
 
@@ -435,12 +557,14 @@ class SettingsView(ModalView):
             host.add_widget(head)
             host.add_widget(txt)
 
-        section("账号与安全", "当前为单机本地使用，账号登录尚未启用（下一步接入）。\n"
-                "本工具不上传你的对话内容。")
+        app = self.app_ref
+        uname = app.auth.username() if app else ""
+        section("账号与安全", f"当前用户：{uname or '（未登录）'}\n"
+                "本机账号仅作使用门槛，不上传对话内容。\n"
+                "忘记密码无法找回，只能清除应用数据重置后重新注册。")
         section("模块说明", "A 财务核查 · B 物业合规 · C 规划违建 · D 行政程序\n"
                 "E 证据固定 · F 沟通博弈 · 其他：不确定时帮你引导归类")
 
-        app = self.app_ref
         if app:
             panel = UpdatePanel(manager=app.update_manager,
                                 device_manager=app.device_manager,
@@ -495,6 +619,9 @@ class OwnerRightsApp(App):
         self.device_manager = DeviceManager(app_data_dir=app_dir)
         self.device_manager.initialize()
 
+        # 本地账号（用户名+密码，首次注册，之后登录）
+        self.auth = LocalAuth(app_dir)
+
         # 法规库
         self.db = LegalDatabase(app_dir / "legal.db")
 
@@ -508,19 +635,38 @@ class OwnerRightsApp(App):
             app_version=APP_VERSION,
         )
 
-        # 首页 + 对话页（KV 里不能直接嵌 Screen，必须在代码里 add）
+        # 账号页 + 首页 + 对话页（KV 里不能直接嵌 Screen，必须在代码里 add）
         root = ScreenManager()
+        auth_screen = AuthScreen(name="auth")
         home = HomeScreen(name="home")
         chat = ChatScreen(name="chat")
+        root.add_widget(auth_screen)
         root.add_widget(home)
         root.add_widget(chat)
-        root.current = "home"
         self.root_widget = root
         self.home_screen = home
         self.chat_screen = chat
+        self.auth_screen = auth_screen
 
-        Clock.schedule_once(lambda dt: self.refresh_status(), 0.1)
+        Clock.schedule_once(lambda dt: self._show_first_screen(), 0.1)
         return root
+
+    def _show_first_screen(self) -> None:
+        """启动时先过账号：未注册进注册页，已注册进登录页。"""
+        if self.auth.is_registered():
+            self.auth_screen.prepare(register_mode=False,
+                                     username=self.auth.username())
+            self.root_widget.current = "auth"
+        else:
+            self.auth_screen.prepare(register_mode=True)
+            self.root_widget.current = "auth"
+        self.refresh_status()
+
+    def reset_auth(self) -> None:
+        """忘记密码的唯一出路：清除账号，回到注册页。"""
+        self.auth.clear()
+        self.auth_screen.prepare(register_mode=True)
+        self.root_widget.current = "auth"
 
     def refresh_status(self) -> None:
         stats = self.db.stats()
