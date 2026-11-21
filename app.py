@@ -5,15 +5,18 @@ app.py —— 业主维权AI助手 主系统入口（Kivy，PC/移动端共用�
 界面（本版：豆包风浅色改造）：
   * 首页：按模块分类的白色圆角卡片，点进去直接空白输入（不再预填示例问题）
   * 对话页：用户/助手气泡分色区隔、可滚动；长按气泡复制整条回答
-  * 底栏两行：输入+发送 / 上传+粘贴+语音+旁听
+  * 底栏两行：输入+发送 / 上传+粘贴+识图+文书+语音+旁听
   * 账号页：本地用户名+密码，首次注册、之后登录（忘记密码只能清数据重置）
-  * 设置弹窗：账号信息 + 模块说明 + 法规库更新 + 关于 + 隐私清除
+  * 设置弹窗：账号信息 + 模块说明 + 能力状态 + 法规库更新 + 关于 + 隐私清除
+  * 识图弹窗：选材料类型 + 手动录入字段 -> 结构化表 + 证据要点，可复制
 
 内核（route / playbook / templates / answer / _search_laws）保持原样，界面层只负责调用。
 线程模型：耗时操作放后台线程，UI 更新经 Clock.schedule_once 回主线程。
 
 登录是本机使用门槛，不是安全边界：账号哈希存在本地，忘记密码无法找回。
 上传边界：只调系统选择器、记录文件名，不读取图片/文档内容，不做 OCR。
+识图边界：只处理手动录入的文字（core/ocrkit.py 规则层），不读图、不自动识别；
+         真正的图像识别需 Tesseract 引擎（待办），届时可直接复用本规则层。
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from kivy.core.text import LabelBase
 from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.metrics import dp
-from kivy.properties import ObjectProperty, StringProperty
+from kivy.properties import ObjectProperty, StringProperty, ListProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -52,6 +55,9 @@ from core.auth import LocalAuth, AuthError
 from core.attach import select_file as attach_select_file
 from core.evidence import detect_entities, recap_question
 from core.docgen import DocRequest, generate as generate_doc, describe_result as describe_doc
+from core.ocrkit import (available_types as ocr_types, DOC_SPECS as OCR_SPECS,
+                         parse_manual_entry, render_material_table,
+                         evidence_tip, degrade_notice)
 from device import DeviceManager
 from database import LegalDatabase
 from downloader import backend_name
@@ -333,6 +339,12 @@ KV = r"""
                     color: 0.20, 0.40, 0.70, 1
                     on_press: root.on_paste()
                 Button:
+                    text: '识图'
+                    background_normal: ''
+                    background_color: 0.20, 0.45, 0.85, 1
+                    color: 1, 1, 1, 1
+                    on_press: root.on_ocr()
+                Button:
                     text: '文书'
                     background_normal: ''
                     background_color: 0.20, 0.45, 0.85, 1
@@ -350,6 +362,96 @@ KV = r"""
                     background_color: 0.93, 0.95, 0.98, 1
                     color: 0.20, 0.40, 0.70, 1
                     on_press: root.on_monitor()
+
+<OcrView>:
+    title: '识图辅助（手动录入）'
+    size_hint: 0.95, 0.92
+    auto_dismiss: True
+    BoxLayout:
+        orientation: 'vertical'
+        padding: dp(10)
+        spacing: dp(6)
+        Label:
+            text: root.degrade_hint
+            font_size: '12sp'
+            color: 0.75, 0.30, 0.20, 1
+            size_hint_y: None
+            height: dp(40)
+            text_size: self.width, None
+        ScrollView:
+            GridLayout:
+                cols: 1
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: dp(6)
+                Label:
+                    text: '① 选择材料类型'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                Spinner:
+                    id: doc_type
+                    text: '银行流水/对账单'
+                    values: root.type_list
+                    size_hint_y: None
+                    height: dp(40)
+                    on_text: root.on_type_change(self.text)
+                Label:
+                    id: field_hint
+                    text: root.field_hint
+                    font_size: '11sp'
+                    color: 0.35, 0.42, 0.5, 1
+                    size_hint_y: None
+                    height: dp(52)
+                    text_size: self.width, None
+                Label:
+                    text: '② 手动录入（每行一条：字段名：值）'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: entry
+                    hint_text: '如：\n金额：35000元\n交易日期：2026-03-05\n对方户名：XX物业'
+                    size_hint_y: None
+                    height: dp(130)
+                    font_size: '13sp'
+                Label:
+                    text: '③ 整理结果（表格 + 证据要点）'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: result
+                    readonly: True
+                    text: root.result_text
+                    size_hint_y: None
+                    height: dp(120)
+                    font_size: '12sp'
+        BoxLayout:
+            size_hint_y: None
+            height: dp(48)
+            spacing: dp(8)
+            Button:
+                text: '关闭'
+                on_press: root.dismiss()
+            Button:
+                text: '复制结果'
+                background_normal: ''
+                background_color: 0.93, 0.95, 0.98, 1
+                color: 0.20, 0.40, 0.70, 1
+                on_press: root.copy_result()
+            Button:
+                text: '整理成表'
+                background_normal: ''
+                background_color: 0.20, 0.45, 0.85, 1
+                color: 1, 1, 1, 1
+                on_press: root.build()
 
 <DocView>:
     title: '生成文书'
@@ -773,6 +875,52 @@ class ChatScreen(Screen):
         """打开文书生成弹窗（D1：用户主动要求成文）。"""
         DocView().open()
 
+    def on_ocr(self) -> None:
+        """打开识图辅助弹窗（C 节规则层：手动录入 -> 结构化表，不读图）。"""
+        OcrView().open()
+
+
+# ---------------------------------------------------------------------------
+# 识图辅助弹窗（C 节规则层：手动录入 -> 结构化表，不读图内容）
+# ---------------------------------------------------------------------------
+
+class OcrView(ModalView):
+    """OCR 规则层界面：选材料类型 + 手动录入字段 -> 结构化表 + 证据要点，可复制。"""
+
+    type_list = ListProperty(ocr_types())
+    field_hint = StringProperty("")
+    result_text = StringProperty("")
+    degrade_hint = StringProperty(degrade_notice())
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.on_type_change(self.ids.doc_type.text)
+
+    def on_type_change(self, doc_type: str) -> None:
+        """切换材料类型时，列出该类应录入的字段，方便业主照着填。"""
+        fields = OCR_SPECS.get(doc_type, [])
+        self.field_hint = "应录入字段：" + "、".join(fields) if fields else ""
+
+    def build(self) -> None:
+        """把录入的文本整理成 C2 结构化表 + C5 证据诊断。"""
+        doc_type = self.ids.doc_type.text
+        provided = parse_manual_entry(self.ids.entry.text)
+        if not provided:
+            self.result_text = "还没有录入字段。请按上方清单，每行写「字段名：值」。"
+            return
+        table = render_material_table(doc_type, provided)
+        report = (table + "\n\n" + evidence_tip(doc_type))
+        self.result_text = report
+
+    def copy_result(self) -> None:
+        """把整理结果复制到系统剪贴板，供粘贴到聊天/文书使用。"""
+        if not self.result_text:
+            return
+        try:
+            Clipboard.copy(self.result_text)
+        except Exception:
+            pass
+
 
 # ---------------------------------------------------------------------------
 # 文书生成弹窗
@@ -853,7 +1001,8 @@ class SettingsView(ModalView):
                 "E 证据固定 · F 沟通博弈 · 其他：不确定时帮你引导归类")
         section("能力状态", "文字咨询：可用 · 关键数字复述核对：已启用\n"
                 "文书生成：可用（电脑出 Word，手机出可复制模板）\n"
-                "语音转写、图片 OCR：后续功能，当前为降级模式，请用文字描述。\n"
+                "识图辅助：可用（底栏「识图」，手动录入字段后整理成表并比对；不读取图片）\n"
+                "语音转写、图片自动识别：后续功能，当前为降级模式，请用文字描述。\n"
                 "全程本地处理，不上传你的音频、图片与文书。")
 
         if app:

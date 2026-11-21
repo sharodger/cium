@@ -341,6 +341,43 @@ def main() -> int:
         w.text for w in sv2.ids.panel_host.children if isinstance(w, KLabel))
     check("能力状态分区", "降级模式" in section_texts and "全程本地" in section_texts)
 
+    # ---------- 10. OCR 规则层（C2/C3/C4/C5/C7/C8） ----------
+    from core import ocrkit
+    ov_types = ocrkit.available_types()
+    check("C3六类材料清单", len(ov_types) == 6 and "整改书/决定书" in ov_types,
+          str(ov_types))
+    check("C3整改书含答复期限", "答复期限" in ocrkit.DOC_SPECS["整改书/决定书"])
+
+    ov_parsed = ocrkit.parse_manual_entry("户名：张三\n金额：35000元\n收款方：XX物业")
+    check("C2录入解析与别名", ov_parsed.get("金额") == "35000元"
+          and ov_parsed.get("对方户名") == "XX物业", str(ov_parsed))
+    ov_table = ocrkit.render_material_table("银行流水/对账单", ov_parsed)
+    check("C2结构化表含待核实", "字段名" in ov_table and "待核实" in ov_table
+          and "置信度" in ov_table, ov_table[:60])
+
+    ov_masked = ocrkit.render_material_table(
+        "EMS面单/送达回执", ocrkit.parse_manual_entry("收件人：13812345678"))
+    check("C8识图输出脱敏", "138****5678" in ov_masked and "13812345678" not in ov_masked)
+
+    ov_diffs = ocrkit.cross_check("合同", {"金额": "35000"}, "流水", {"金额": "38000"})
+    check("C4交叉比对差异", len(ov_diffs) == 1 and "35000" in ocrkit.render_diffs(ov_diffs),
+          ocrkit.render_diffs(ov_diffs))
+    check("C4无差异提示", "未发现差异" in ocrkit.render_diffs(
+        ocrkit.cross_check("A", {"金额": "100"}, "B", {"金额": "100"})))
+
+    check("C5证据效力诊断", "时间水印" in ocrkit.evidence_tip("银行流水/对账单"))
+    check("C7降级不虚构", "不读取图片" in ocrkit.degrade_notice())
+
+    # 界面接线：识图按钮 + 弹窗
+    ov = app_mod.OcrView()
+    check("识图弹窗六类可选项", len(ov.type_list) == 6, str(len(ov.type_list)))
+    ov.on_type_change("整改书/决定书")
+    check("识图字段提示", "答复期限" in ov.field_hint, ov.field_hint)
+    ov.ids.entry.text = "文号：〔2026〕第12号\n答复期限：2026-03-20"
+    ov.build()
+    check("识图整理成表", "字段名" in ov.result_text and "待核实" in ov.result_text,
+          ov.result_text[:60])
+
     # ---------- 汇总 ----------
     print("\n" + "=" * 58)
     passed = sum(1 for _, ok, _ in results if ok)
