@@ -2,17 +2,18 @@
 """
 app.py —— 业主维权AI助手 主系统入口（Kivy，PC/移动端共用）
 
-界面（本版重做）：
-  * 首页：按模块分类的卡片，点卡片带引导问题进对话；"其他/不确定"做引导
-  * 对话页：用户/助手气泡分色区隔，可滚动
+界面（本版：豆包风浅色改造）：
+  * 首页：按模块分类的白色圆角卡片，点进去直接空白输入（不再预填示例问题）
+  * 对话页：用户/助手气泡分色区隔、可滚动；长按气泡复制整条回答
+  * 底栏两行：输入+发送 / 上传+粘贴+语音+旁听
   * 账号页：本地用户名+密码，首次注册、之后登录（忘记密码只能清数据重置）
   * 设置弹窗：账号信息 + 模块说明 + 法规库更新 + 关于 + 隐私清除
-  * 顶部状态栏、底部工具按钮，统一卡片式工具软件观感
 
 内核（route / playbook / templates / answer / _search_laws）保持原样，界面层只负责调用。
 线程模型：耗时操作放后台线程，UI 更新经 Clock.schedule_once 回主线程。
 
 登录是本机使用门槛，不是安全边界：账号哈希存在本地，忘记密码无法找回。
+上传边界：只调系统选择器、记录文件名，不读取图片/文档内容，不做 OCR。
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ sys.path.insert(0, str(LEGAL_DIR))   # 让 legal 子系统平级导入生效（�
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.core.clipboard import Clipboard
 from kivy.core.text import LabelBase
 from kivy.core.window import Window
 from kivy.lang import Builder
@@ -47,6 +49,7 @@ from core.router import MODULE_NAMES, route
 from core.playbook import pick as pick_playbook
 from core.templates import AnswerSections, render, BriefSections, render_brief
 from core.auth import LocalAuth, AuthError
+from core.attach import select_file as attach_select_file
 from device import DeviceManager
 from database import LegalDatabase
 from downloader import backend_name
@@ -55,22 +58,16 @@ from legal.ui.update_panel import UpdatePanel
 
 APP_VERSION = "1.0.0"
 
-# 首页模块卡片：(代号, 标题, 说明, 点进去预填的引导问题)
+# 首页模块卡片：(代号, 标题, 说明)。
+# 注意：点卡片不再预填示例问题，进入对话页后由用户自己描述。
 MODULE_CARDS = [
-    ("A", "财务核查", "公共收益、账目、物业费",
-     "小区的公共收益和账目不公开，我应该怎么查？"),
-    ("B", "物业合规", "业委会、合同、表决、涨价",
-     "业委会没经过业主大会表决就做决定，怎么处理？"),
-    ("C", "规划违建", "违建、改建、占用绿地",
-     "有人占用公共绿地搭建，我该找谁、怎么办？"),
-    ("D", "行政程序", "投诉、举报、复议、找哪个部门",
-     "这个问题该向哪个部门投诉，答复期限怎么算？"),
-    ("E", "证据固定", "拍照留痕、录音、送达",
-     "我要留存证据和送达文书，怎么做才有效？"),
-    ("F", "沟通博弈", "谈判、催办、质询话术",
-     "物业拖着不办，我该怎么书面催办和质询？"),
-    ("综合", "其他 / 不确定", "不知道属于哪一类，帮我引导",
-     "我遇到一个问题，但不确定该问哪一类，帮我梳理一下。"),
+    ("A", "财务核查", "公共收益、账目、物业费"),
+    ("B", "物业合规", "业委会、合同、表决、涨价"),
+    ("C", "规划违建", "违建、改建、占用绿地"),
+    ("D", "行政程序", "投诉、举报、复议、找哪个部门"),
+    ("E", "证据固定", "拍照留痕、录音、送达"),
+    ("F", "沟通博弈", "谈判、催办、质询话术"),
+    ("综合", "其他 / 不确定", "不知道属于哪一类，帮我引导"),
 ]
 
 
@@ -160,21 +157,21 @@ KV = r"""
 <ChatBubble>:
     orientation: 'vertical'
     size_hint_y: None
-    height: max(dp(40), self.minimum_height)
+    height: max(dp(44), self.minimum_height)
     padding: dp(10), dp(8)
     spacing: dp(2)
     canvas.before:
         Color:
-            rgba: (0.20, 0.45, 0.72, 1) if root.role == 'user' else (0.90, 0.91, 0.93, 1)
+            rgba: (0.22, 0.51, 0.90, 1) if root.role == 'user' else (1, 1, 1, 1)
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [dp(8)]
+            radius: [dp(12)]
     Label:
-        text: '我' if root.role == 'user' else '助手'
+        text: '我' if root.role == 'user' else '助手 · 长按复制'
         font_size: '10sp'
         bold: True
-        color: (0.85, 0.92, 1, 1) if root.role == 'user' else (0.35, 0.35, 0.35, 1)
+        color: (0.90, 0.95, 1, 1) if root.role == 'user' else (0.45, 0.50, 0.58, 1)
         size_hint_y: None
         height: dp(16)
         halign: 'left'
@@ -182,7 +179,8 @@ KV = r"""
         id: lbl
         text: root.text_value
         font_size: '14sp'
-        color: (1, 1, 1, 1) if root.role == 'user' else (0.12, 0.12, 0.12, 1)
+        line_height: 1.35
+        color: (1, 1, 1, 1) if root.role == 'user' else (0.15, 0.20, 0.28, 1)
         text_size: self.width, None
         size_hint_y: None
         height: self.texture_size[1]
@@ -190,15 +188,21 @@ KV = r"""
         valign: 'top'
 
 <HomeScreen>:
+    canvas.before:
+        Color:
+            rgba: 0.96, 0.97, 0.99, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
     BoxLayout:
         orientation: 'vertical'
         BoxLayout:
             size_hint_y: None
-            height: dp(62)
+            height: dp(64)
             padding: dp(12), dp(6)
             canvas.before:
                 Color:
-                    rgba: 0.12, 0.30, 0.48, 1
+                    rgba: 1, 1, 1, 1
                 Rectangle:
                     pos: self.pos
                     size: self.size
@@ -208,23 +212,26 @@ KV = r"""
                     text: '业主维权AI助手'
                     font_size: '18sp'
                     bold: True
-                    color: 1, 1, 1, 1
+                    color: 0.10, 0.20, 0.33, 1
                     halign: 'left'
                 Label:
                     text: root.status_line
                     font_size: '11sp'
-                    color: 0.85, 0.90, 0.96, 1
+                    color: 0.40, 0.47, 0.56, 1
                     halign: 'left'
             Button:
                 text: '设置'
                 size_hint_x: 0.20
+                background_normal: ''
+                background_color: 0.20, 0.45, 0.85, 1
+                color: 1, 1, 1, 1
                 on_press: root.open_settings()
         Label:
-            text: '选择你遇到的问题类型，点进去直接提问'
+            text: '选择你遇到的问题类型，点进去直接描述'
             size_hint_y: None
             height: dp(36)
             font_size: '13sp'
-            color: 0.30, 0.34, 0.40, 1
+            color: 0.28, 0.34, 0.42, 1
             halign: 'left'
             padding_x: dp(12)
         ScrollView:
@@ -238,6 +245,12 @@ KV = r"""
                 padding: dp(12)
 
 <ChatScreen>:
+    canvas.before:
+        Color:
+            rgba: 0.96, 0.97, 0.99, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
     BoxLayout:
         orientation: 'vertical'
         BoxLayout:
@@ -247,22 +260,28 @@ KV = r"""
             spacing: dp(6)
             canvas.before:
                 Color:
-                    rgba: 0.12, 0.30, 0.48, 1
+                    rgba: 1, 1, 1, 1
                 Rectangle:
                     pos: self.pos
                     size: self.size
             Button:
                 text: '< 首页'
                 size_hint_x: 0.22
+                background_normal: ''
+                background_color: 0.20, 0.45, 0.85, 1
+                color: 1, 1, 1, 1
                 on_press: root.go_home()
             Label:
                 text: root.module_title
                 font_size: '15sp'
                 bold: True
-                color: 1, 1, 1, 1
+                color: 0.10, 0.20, 0.33, 1
             Button:
                 text: '设置'
                 size_hint_x: 0.20
+                background_normal: ''
+                background_color: 0.20, 0.45, 0.85, 1
+                color: 1, 1, 1, 1
                 on_press: root.open_settings()
         ScrollView:
             id: transcript_view
@@ -274,27 +293,55 @@ KV = r"""
                 spacing: dp(8)
                 padding: dp(10)
         BoxLayout:
+            orientation: 'vertical'
             size_hint_y: None
-            height: dp(56)
-            padding: dp(8)
-            spacing: dp(6)
-            TextInput:
-                id: entry
-                hint_text: '说说你遇到的问题（文字）…'
-                multiline: False
-                on_text_validate: root.send()
-            Button:
-                text: '发送'
-                size_hint_x: 0.20
-                on_press: root.send()
-            Button:
-                text: '语音'
-                size_hint_x: 0.16
-                on_press: root.on_voice()
-            Button:
-                text: '旁听'
-                size_hint_x: 0.16
-                on_press: root.on_monitor()
+            height: dp(100)
+            padding: dp(6), dp(4)
+            spacing: dp(4)
+            BoxLayout:
+                size_hint_y: None
+                height: dp(46)
+                spacing: dp(6)
+                TextInput:
+                    id: entry
+                    hint_text: '说说你遇到的问题（文字）…'
+                    multiline: False
+                    on_text_validate: root.send()
+                Button:
+                    text: '发送'
+                    size_hint_x: 0.20
+                    background_normal: ''
+                    background_color: 0.20, 0.45, 0.85, 1
+                    color: 1, 1, 1, 1
+                    on_press: root.send()
+            BoxLayout:
+                size_hint_y: None
+                height: dp(42)
+                spacing: dp(6)
+                Button:
+                    text: '上传文件'
+                    background_normal: ''
+                    background_color: 0.93, 0.95, 0.98, 1
+                    color: 0.20, 0.40, 0.70, 1
+                    on_press: root.on_upload()
+                Button:
+                    text: '粘贴'
+                    background_normal: ''
+                    background_color: 0.93, 0.95, 0.98, 1
+                    color: 0.20, 0.40, 0.70, 1
+                    on_press: root.on_paste()
+                Button:
+                    text: '语音'
+                    background_normal: ''
+                    background_color: 0.93, 0.95, 0.98, 1
+                    color: 0.20, 0.40, 0.70, 1
+                    on_press: root.on_voice()
+                Button:
+                    text: '旁听'
+                    background_normal: ''
+                    background_color: 0.93, 0.95, 0.98, 1
+                    color: 0.20, 0.40, 0.70, 1
+                    on_press: root.on_monitor()
 
 <SettingsView>:
     title: '设置'
@@ -384,7 +431,7 @@ class AuthScreen(Screen):
 # ---------------------------------------------------------------------------
 
 class HomeScreen(Screen):
-    """模块分类首页：点卡片带引导问题进对话。"""
+    """模块分类首页：点卡片进对话，由用户自己描述问题（不再预填示例）。"""
 
     status_line = StringProperty("法规库：-")
 
@@ -393,27 +440,29 @@ class HomeScreen(Screen):
         Clock.schedule_once(lambda dt: self._build_cards(), 0)
 
     def _build_cards(self) -> None:
-        """把六个模块 + 其他，做成卡片按钮。"""
+        """把六个模块 + 其他，做成白色圆角卡片（key：清空默认纹理否则发灰）。"""
         grid = self.ids.module_grid
         if grid.children:  # 避免重复构建
             return
-        for code, title, desc, question in MODULE_CARDS:
+        for code, title, desc in MODULE_CARDS:
             btn = Button(
-                text=f"{code}. {title}\n{desc}",
+                text=f"{code}. {title}\n[size=12]{desc}[/size]",
                 size_hint_y=None,
                 height=dp(72),
-                background_color=(0.96, 0.97, 0.98, 1),
-                color=(0.12, 0.18, 0.26, 1),
+                background_normal="",          # 关键：去掉 Kivy 默认灰纹理
+                background_color=(1, 1, 1, 1),  # 纯白卡片
+                color=(0.15, 0.25, 0.38, 1),    # 深色字，清晰
                 halign="left",
                 valign="middle",
+                markup=True,                     # 让 [size=12] 生效
             )
-            btn.bind(on_press=lambda inst, q=question, t=title: self._enter(q, t))
+            btn.bind(on_press=lambda inst, t=title: self._enter(t))
             grid.add_widget(btn)
 
-    def _enter(self, question: str, title: str) -> None:
+    def _enter(self, title: str) -> None:
         app = App.get_running_app()
         chat = app.root_widget.get_screen("chat")
-        chat.start_conversation(question, title)
+        chat.start_conversation(title)
         self.manager.current = "chat"
 
     def open_settings(self) -> None:
@@ -430,9 +479,44 @@ class HomeScreen(Screen):
 # ---------------------------------------------------------------------------
 
 class ChatBubble(BoxLayout):
-    """一条气泡消息：role=user 蓝底靠右，role=assistant 灰底靠左。"""
+    """一条气泡消息：role=user 蓝底靠右，role=assistant 白底靠左；长按复制。"""
     role = StringProperty("assistant")
     text_value = StringProperty("")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._press_event = None   # 长按计时器
+        self._touch_origin = (0, 0)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self._touch_origin = touch.pos
+            self._press_event = Clock.schedule_once(lambda dt: self._copy(), 0.8)
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        # 手指移动超过阈值 = 用户在滚动，取消长按，避免误复制
+        if self._press_event and (
+            abs(touch.x - self._touch_origin[0]) > dp(8)
+            or abs(touch.y - self._touch_origin[1]) > dp(8)
+        ):
+            self._press_event.cancel()
+            self._press_event = None
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._press_event:
+            self._press_event.cancel()
+            self._press_event = None
+        return super().on_touch_up(touch)
+
+    def _copy(self) -> None:
+        """长按 0.8 秒触发：整条文本复制到剪贴板。"""
+        self._press_event = None
+        try:
+            Clipboard.copy(self.text_value)
+        except Exception:
+            pass
 
 
 class ChatScreen(Screen):
@@ -444,14 +528,11 @@ class ChatScreen(Screen):
         super().__init__(**kwargs)
         self._history: list[tuple[str, str]] = []  # (角色, 文本)
 
-    def start_conversation(self, question: str, title: str) -> None:
-        """从首页进来：设置模块标题、预填引导问题、清空历史并给欢迎语。"""
+    def start_conversation(self, title: str) -> None:
+        """从首页进来：只设模块标题、清空历史、输入框留空由用户自己描述。"""
         self.module_title = title
-        self.ids.entry.text = question
-        self._history = []
-        self._history.append(("assistant",
-            "已按「" + title + "」为你准备了一个问题，可直接发送或修改后再发。\n"
-            "（仅供参考，重大事项请咨询执业律师或拨打 12348）"))
+        self.ids.entry.text = ""          # 不预填示例问题
+        self._history = []                # 不加欢迎气泡
         self._render_transcript()
 
     def _ui(self, fn, *args, **kwargs):
@@ -530,6 +611,38 @@ class ChatScreen(Screen):
             "（后续将用于实时记录与要点提示）"))
         self._render_transcript()
 
+    def on_paste(self) -> None:
+        """把系统剪贴板文字粘进输入框（长按输入框也可用系统粘贴）。"""
+        try:
+            text = Clipboard.paste()
+        except Exception:
+            text = ""
+        if text:
+            self.ids.entry.text = (self.ids.entry.text + text).strip()
+
+    def on_upload(self) -> None:
+        """
+        调起系统选择器，只记录文件名，不读取内容、不做 OCR。
+        Android 上系统选择是异步的：本函数立即返回，文件名稍后由回调给出。
+        """
+        started = attach_select_file(self._on_file_selected, file_type="any")
+        if not started:
+            self._history.append(("assistant",
+                "【上传文件】当前环境不支持文件选择（降级模式），"
+                "请先用文字描述材料内容。"))
+            self._render_transcript()
+
+    def _on_file_selected(self, filename: str) -> None:
+        """系统选择器回调（可能不在主线程）：把文件名作为材料记录进对话。"""
+        note = (f"【已选择材料】{filename}\n"
+                "（已记录文件名；当前版本不读取文件内容，"
+                "OCR 识别与文档解析为后续功能）")
+        self._ui(self._append_material_note, note)
+
+    def _append_material_note(self, note: str) -> None:
+        self._history.append(("assistant", note))
+        self._render_transcript()
+
 
 # ---------------------------------------------------------------------------
 # 设置弹窗
@@ -571,8 +684,10 @@ class SettingsView(ModalView):
                                 app_version=APP_VERSION)
             host.add_widget(panel)
 
+        tech = app.technical_status() if app else ""
         section("关于", f"业主维权AI助手 v{APP_VERSION}\n"
                 "本地优先，法规库可离线更新。\n"
+                f"{tech}\n"
                 "本工具提供信息整理与行动建议，不构成正式法律意见。")
 
     def clear_privacy(self) -> None:
@@ -669,13 +784,21 @@ class OwnerRightsApp(App):
         self.root_widget.current = "auth"
 
     def refresh_status(self) -> None:
+        """首页状态行只显示用户看得懂的信息；技术细节移到设置-关于。"""
+        stats = self.db.stats()
+        count = stats["law_count"]
+        if count:
+            text = f"法规库 {count} 条（点右上角设置可检查更新）"
+        else:
+            text = "法规库 0 条（点右上角设置可更新，更新后回答会附法规依据）"
+        self.home_screen.refresh_status(text)
+
+    def technical_status(self) -> str:
+        """技术细节（版本/设备号/下载后端），供设置-关于查看。"""
         stats = self.db.stats()
         updated = (stats.get("last_update_at") or "")[:16].replace("T", " ")
-        text = (f"法规库 v{stats['law_version']} · {stats['law_count']} 条 · "
-                f"{self.device_manager.short_id()} · {backend_name()}")
-        if updated:
-            text += f" · 更新于 {updated}"
-        self.home_screen.refresh_status(text)
+        return (f"法规库版本 v{stats['law_version']} · 更新于 {updated or '未更新'}\n"
+                f"设备 {self.device_manager.short_id()} · 下载通道 {backend_name()}")
 
     def open_settings(self) -> None:
         view = SettingsView(app_ref=self)

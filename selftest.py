@@ -100,9 +100,19 @@ def main() -> int:
     check("空库降级提示", "待核实" in empty_answer)
 
     # ---------- 5. 账号页 + UI 构建 + 占位 ----------
+    import time as _time
     from kivy.clock import Clock
-    root = a.build()
-    Clock.tick()  # 让首屏判定的 schedule_once 落地
+    from unittest.mock import patch
+    # 账号数据隔离到临时目录，避免污染真实目录导致"账号已存在"（测试隔离）
+    tmp_data = Path(tempfile.mkdtemp(prefix="auth_"))
+    root = None
+    with patch.object(type(a), "user_data_dir",
+                      new_callable=lambda: property(lambda self: str(tmp_data))):
+        root = a.build()
+    # 等 >0.1s 再 tick，让 build 里延迟的首屏判定先落地，
+    # 避免它在注册后才触发、把界面切回登录页（真机不会发生，此处仅消除测试时序竞争）
+    _time.sleep(0.15)
+    Clock.tick()
     check("三个页面就绪", root.screen_names == ["auth", "home", "chat"],
           str(root.screen_names))
     check("未注册先到账号页", root.current == "auth", str(root.current))
@@ -135,12 +145,13 @@ def main() -> int:
     check("模块卡片数量", len(home.ids.module_grid.children) == 7,
           str(len(home.ids.module_grid.children)))
 
-    # 首页点卡片 -> 带引导问题进对话
+    # 首页点卡片 -> 空白输入框进对话（不再预填示例）
     home._build_cards()
-    home._enter("测试引导问题", "财务核查")
-    check("首页卡片带问题进对话", root.current == "chat"
-          and chat.ids.entry.text == "测试引导问题" and chat.module_title == "财务核查",
-          f"{root.current} / {chat.ids.entry.text}")
+    home._enter("财务核查")
+    check("首页卡片进空白对话", root.current == "chat"
+          and chat.ids.entry.text == "" and chat.module_title == "财务核查"
+          and not chat._history,
+          f"{root.current} / 输入框='{chat.ids.entry.text}' / 气泡={len(chat._history)}")
 
     before = len(chat._history)
     chat.on_voice()
@@ -197,6 +208,63 @@ def main() -> int:
     panel._refresh_version()
     check("版本显示含完整日期", "2026-11-20 05:39" in panel.version_label,
           panel.version_label)
+
+    # ---------- 7. 豆包风界面 + 复制粘贴 + 上传降级 ----------
+    from kivy.core.clipboard import Clipboard as CB
+    from app import ChatBubble
+
+    # 首页卡片：纯白纹理（关键：background_normal='' 否则发灰）
+    card = home.ids.module_grid.children[0]
+    check("卡片纯白无灰纹理", card.background_normal == ""
+          and tuple(round(x, 2) for x in card.background_color[:3]) == (1.0, 1.0, 1.0),
+          f"normal={card.background_normal!r} color={card.background_color[:3]}")
+
+    # 首页背景为浅色（canvas.before 会混有 PushMatrix，按类型过滤找 Color）
+    from kivy.graphics import Color as KGColor
+    home_bg = next(c.rgba for c in home.canvas.before.children if isinstance(c, KGColor))
+    check("首页浅色背景", tuple(round(x, 2) for x in home_bg[:3]) == (0.96, 0.97, 0.99),
+          str(home_bg[:3]))
+
+    # 状态行是人话，不含设备号/下载后端等技术信息
+    a.refresh_status()
+    status = home.status_line
+    check("状态行人话化", "法规库" in status and "DEV-" not in status
+          and "requests" not in status and "可" in status, status)
+
+    # 技术细节进设置-关于
+    tech = a.technical_status()
+    check("技术细节移到设置", "DEV-" in tech and "v" in tech, tech.replace("\n", " | "))
+
+    # 首页气泡分色 + 白底助手气泡
+    chat._history = [("user", "问题"), ("assistant", "回答")]
+    chat._render_transcript()
+    bs = [c for row in chat.ids.bubbles.children for c in row.children
+          if isinstance(c, ChatBubble)]
+    asst = [b for b in bs if b.role == "assistant"][0]
+    asst_bg = next(c.rgba for c in asst.canvas.before.children if isinstance(c, KGColor))
+    check("助手气泡白底", tuple(round(x, 2) for x in asst_bg) == (1.0, 1.0, 1.0, 1.0),
+          str(asst_bg))
+
+    # 长按复制：计时触发后剪贴板=整条文本
+    CB.copy("清空")
+    asst._copy()
+    check("长按复制整条回答", CB.paste() == "回答", CB.paste())
+
+    # 粘贴按钮：剪贴板内容进输入框
+    CB.copy("粘贴的文字")
+    chat.ids.entry.text = ""
+    chat.on_paste()
+    check("粘贴进输入框", chat.ids.entry.text == "粘贴的文字", chat.ids.entry.text)
+
+    # 上传降级：本机无 plyer 应给降级提示，不崩溃、不假装成功
+    before = len(chat._history)
+    chat.on_upload()
+    check("上传降级不虚构", len(chat._history) == before + 1
+          and "不支持" in chat._history[-1][1], chat._history[-1][1][:30])
+
+    # 上传模块文件名提取
+    from core.attach import _basename
+    check("上传文件名提取", _basename("/sdcard/证据.jpg?x=1") == "证据.jpg")
 
     # ---------- 汇总 ----------
     print("\n" + "=" * 58)

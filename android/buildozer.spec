@@ -39,8 +39,9 @@ source.include_patterns = core/*.py,legal/*.py,legal/ui/*.py,legal/dist/*.json,l
 version = 1.0.0
 version.code = 1
 
-# 依赖：python3 + kivy 固定版本；requests 下载更新包；其余是 requests 移动端传递依赖
-requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer
+# 依赖：python3 + kivy 固定版本；requests 下载更新包；plyer 调系统文件选择器（上传）
+# 其余是 requests 移动端传递依赖
+requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer,plyer
 
 # 屏幕方向：工具型应用，竖屏为主
 orientation = portrait
