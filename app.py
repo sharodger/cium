@@ -50,6 +50,8 @@ from core.playbook import pick as pick_playbook
 from core.templates import AnswerSections, render, BriefSections, render_brief
 from core.auth import LocalAuth, AuthError
 from core.attach import select_file as attach_select_file
+from core.evidence import detect_entities, recap_question
+from core.docgen import DocRequest, generate as generate_doc, describe_result as describe_doc
 from device import DeviceManager
 from database import LegalDatabase
 from downloader import backend_name
@@ -319,7 +321,7 @@ KV = r"""
                 height: dp(42)
                 spacing: dp(6)
                 Button:
-                    text: '上传文件'
+                    text: '上传'
                     background_normal: ''
                     background_color: 0.93, 0.95, 0.98, 1
                     color: 0.20, 0.40, 0.70, 1
@@ -330,6 +332,12 @@ KV = r"""
                     background_color: 0.93, 0.95, 0.98, 1
                     color: 0.20, 0.40, 0.70, 1
                     on_press: root.on_paste()
+                Button:
+                    text: '文书'
+                    background_normal: ''
+                    background_color: 0.20, 0.45, 0.85, 1
+                    color: 1, 1, 1, 1
+                    on_press: root.on_document()
                 Button:
                     text: '语音'
                     background_normal: ''
@@ -342,6 +350,115 @@ KV = r"""
                     background_color: 0.93, 0.95, 0.98, 1
                     color: 0.20, 0.40, 0.70, 1
                     on_press: root.on_monitor()
+
+<DocView>:
+    title: '生成文书'
+    size_hint: 0.95, 0.92
+    auto_dismiss: True
+    BoxLayout:
+        orientation: 'vertical'
+        padding: dp(10)
+        spacing: dp(6)
+        ScrollView:
+            GridLayout:
+                cols: 1
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: dp(6)
+                Label:
+                    text: '文书类型'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: doc_type
+                    text: '财务质询函'
+                    size_hint_y: None
+                    height: dp(38)
+                    multiline: False
+                Label:
+                    text: '收件方全称'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: party
+                    hint_text: '如：XX区城管局'
+                    size_hint_y: None
+                    height: dp(38)
+                    multiline: False
+                Label:
+                    text: '事实'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: fact
+                    hint_text: '发生了什么'
+                    size_hint_y: None
+                    height: dp(64)
+                Label:
+                    text: '依据（不确定可留空，将标待核实）'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: basis
+                    hint_text: '条款号与内容摘要'
+                    size_hint_y: None
+                    height: dp(56)
+                Label:
+                    text: '请求'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: request
+                    hint_text: '要求对方做什么'
+                    size_hint_y: None
+                    height: dp(56)
+                Label:
+                    text: '答复时限'
+                    size_hint_y: None
+                    height: dp(22)
+                    font_size: '12sp'
+                    color: 0.3, 0.35, 0.42, 1
+                    halign: 'left'
+                TextInput:
+                    id: deadline
+                    hint_text: '如：收到本函七日内'
+                    size_hint_y: None
+                    height: dp(38)
+                    multiline: False
+                Label:
+                    id: message
+                    text: root.message
+                    font_size: '12sp'
+                    color: 0.75, 0.25, 0.25, 1
+                    size_hint_y: None
+                    height: dp(40)
+        BoxLayout:
+            size_hint_y: None
+            height: dp(48)
+            spacing: dp(8)
+            Button:
+                text: '关闭'
+                on_press: root.dismiss()
+            Button:
+                text: '生成文书'
+                background_normal: ''
+                background_color: 0.20, 0.45, 0.85, 1
+                on_press: root.generate()
 
 <SettingsView>:
     title: '设置'
@@ -580,6 +697,15 @@ class ChatScreen(Screen):
         self.ids.entry.text = ""
         self._history.append(("user", text))
         self._render_transcript()
+        # B2 关键实体复述确认（G6：金额/日期/文号未确认不进结论）。
+        # 只作提示气泡，不拦截、不改内核回答，避免破坏既有流程。
+        try:
+            recap = recap_question(detect_entities(text))
+        except Exception:
+            recap = ""
+        if recap:
+            self._history.append(("assistant", "【请核对】" + recap + " 如有误请改正后重发。"))
+            self._render_transcript()
         self._history.append(("assistant", "正在分析…"))
         self._render_transcript()
 
@@ -643,6 +769,54 @@ class ChatScreen(Screen):
         self._history.append(("assistant", note))
         self._render_transcript()
 
+    def on_document(self) -> None:
+        """打开文书生成弹窗（D1：用户主动要求成文）。"""
+        DocView().open()
+
+
+# ---------------------------------------------------------------------------
+# 文书生成弹窗
+# ---------------------------------------------------------------------------
+
+class DocView(ModalView):
+    """文书生成：字段齐全后调用 docgen，PC 出 docx、手机出模板。"""
+
+    message = StringProperty("")
+
+    def generate(self) -> None:
+        from core.evidence import missing_doc_fields, next_missing_question
+        doc_type = self.ids.doc_type.text.strip() or "文书"
+        party = self.ids.party.text.strip()
+        req = DocRequest(
+            doc_type=doc_type,
+            party=party or "（待填写）",
+            sections=[
+                ("事实", self.ids.fact.text.strip() or "（待补充）"),
+                ("依据", self.ids.basis.text.strip() or "具体条款待核实"),
+                ("请求", self.ids.request.text.strip() or "（待补充）"),
+                ("时限", self.ids.deadline.text.strip() or "（待补充）"),
+            ],
+        )
+        # D2 前置检查：收件方缺失先问，一次一个（不靠编造填满）
+        if not party:
+            self.message = next_missing_question({"收件方全称": "", "事由": "有", "落款人": "有"})
+            return
+        try:
+            result = generate_doc(req)
+            report = describe_doc(result)
+        except Exception as e:
+            self.message = f"生成失败：{e}"
+            return
+        # 结果写进对话，用户可直接看到文件名/路径；关闭弹窗
+        app = App.get_running_app()
+        if app and app.chat_screen:
+            app.chat_screen._history.append(("assistant", report))
+            if not result.generated:
+                app.chat_screen._history.append(("assistant", result.text))
+            app.chat_screen._render_transcript()
+        self.message = ""
+        self.dismiss()
+
 
 # ---------------------------------------------------------------------------
 # 设置弹窗
@@ -677,6 +851,10 @@ class SettingsView(ModalView):
                 "忘记密码无法找回，只能清除应用数据重置后重新注册。")
         section("模块说明", "A 财务核查 · B 物业合规 · C 规划违建 · D 行政程序\n"
                 "E 证据固定 · F 沟通博弈 · 其他：不确定时帮你引导归类")
+        section("能力状态", "文字咨询：可用 · 关键数字复述核对：已启用\n"
+                "文书生成：可用（电脑出 Word，手机出可复制模板）\n"
+                "语音转写、图片 OCR：后续功能，当前为降级模式，请用文字描述。\n"
+                "全程本地处理，不上传你的音频、图片与文书。")
 
         if app:
             panel = UpdatePanel(manager=app.update_manager,

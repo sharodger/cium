@@ -266,6 +266,81 @@ def main() -> int:
     from core.attach import _basename
     check("上传文件名提取", _basename("/sdcard/证据.jpg?x=1") == "证据.jpg")
 
+    # ---------- 8. 行为规则层 + 文书生成（三能力第一步） ----------
+    from core.evidence import (
+        detect_entities, recap_question, mask_sensitive,
+        Field, render_fields_table, next_missing_question,
+    )
+    # B2 关键实体 + 复述确认（含中文数字金额）
+    ents = detect_entities("业委会2026年3月5日要收三万五千元，文号〔2026〕第12号")
+    kinds = {e.kind for e in ents}
+    check("B2关键实体检测", {"日期", "金额", "文号"} <= kinds, str(kinds))
+    check("B2复述确认句", "对不对" in recap_question(ents), recap_question(ents))
+
+    # C8/G 敏感信息脱敏
+    masked = mask_sensitive("13812345678 110101199001011234 6222021234567890123")
+    check("C8敏感信息脱敏", "13812345678" not in masked and "110101199001011234" not in masked
+          and "6222" in masked, masked)
+
+    # C2 置信度表：低置信度标待核实
+    ftab = render_fields_table([
+        Field("金额", "35000元", "低", "图模糊"),
+        Field("日期", "", "低", "未识别"),
+    ])
+    check("C2置信度表待核实", "待核实" in ftab and "置信度" in ftab)
+
+    # D2 缺项先问，一次一个
+    q = next_missing_question({"收件方全称": "", "事由": "有", "落款人": "有"})
+    check("D2缺项先问", q.startswith("请告诉我") and "收件方" in q, q)
+
+    # D3/D5/D6 docx 生成 + 命名（用临时目录隔离，csv 不入项目）
+    from core.docgen import DocRequest, generate as gen_doc, describe_result
+    doc_dir = Path(tempfile.mkdtemp(prefix="docgen_"))
+    req = DocRequest(
+        doc_type="财务质询函", party="XX物业",
+        sections=[("事实", "多年未公示公共收益"), ("依据", "条款待核实"),
+                  ("请求", "公开台账"), ("时限", "七日内答复")],
+        output_dir=doc_dir,
+    )
+    dres = gen_doc(req)
+    check("D5文书命名", dres.filename.startswith("20") and "财务质询函" in dres.filename
+          and dres.filename.endswith(".docx"), dres.filename)
+    # 本机有 python-docx -> 应真生成；无论生成与否，describe 不谎称
+    if dres.generated:
+        from docx import Document as _Doc
+        dtxt = "\n".join(p.text for p in _Doc(str(dres.path)).paragraphs)
+        check("D3docx正文可读回", "财务质询函" in dtxt and "七日内答复" in dtxt)
+        check("D6告知路径", dres.path is not None and str(dres.path) in describe_result(dres))
+        # 同名不覆盖
+        dres2 = gen_doc(req)
+        check("D5同名不覆盖", dres2.filename != dres.filename, f"{dres.filename} / {dres2.filename}")
+    else:
+        check("D7降级说明", "未生成" in describe_result(dres))
+
+    # 降级路径：屏蔽 docx 导入应返回 generated=False 而非崩溃
+    import builtins
+    real_import = builtins.__import__
+    def _block(name, *a, **k):
+        if name == "docx" or name.startswith("docx."):
+            raise ImportError("模拟移动端无 python-docx")
+        return real_import(name, *a, **k)
+    builtins.__import__ = _block
+    try:
+        dres3 = gen_doc(DocRequest(doc_type="异议核查申请", party="XX城管局",
+                                   sections=[("请求", "核查")], output_dir=doc_dir))
+        check("D7无docx降级", not dres3.generated and dres3.path is None
+              and "未生成" in describe_result(dres3))
+    finally:
+        builtins.__import__ = real_import
+
+    # 界面接线：底栏有文书按钮、设置含能力状态分区
+    from kivy.uix.label import Label as KLabel
+    sv2 = app_mod.SettingsView(app_ref=a)
+    sv2.build_sections()
+    section_texts = " ".join(
+        w.text for w in sv2.ids.panel_host.children if isinstance(w, KLabel))
+    check("能力状态分区", "降级模式" in section_texts and "全程本地" in section_texts)
+
     # ---------- 汇总 ----------
     print("\n" + "=" * 58)
     passed = sum(1 for _, ok, _ in results if ok)
