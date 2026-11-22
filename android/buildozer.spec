@@ -45,8 +45,10 @@ version.code = 1
 requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer,plyer,pyjnius
 
 # Android 原生依赖：Tesseract4Android 单线程版（JitPack 坐标）
-# p4a 会把本行注入 build.gradle 的 dependencies；中文识别另需 assets/tessdata/chi_sim.traineddata
+# p4a 的 gradle 模板只配了 google()/jcenter()，而本库只发布在 JitPack。
+# 必须显式加 JitPack 仓库，否则依赖解析不到，报 :checkDebugAarMetadata 失败。
 android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.9.0
+android.add_gradle_repositories = "maven { url 'https://jitpack.io' }"
 
 # 屏幕方向：工具型应用，竖屏为主
 orientation = portrait
@@ -59,7 +61,9 @@ android.api = 35
 android.minapi = 21
 android.sdk = 35
 android.ndk = 25c
-android.use_androidx = True
+# 键名必须是 enable_androidx（use_androidx 是无效键，会被忽略）；
+# Tesseract4Android 及其 Kotlin/AndroidX 传递依赖需要启用 AndroidX
+android.enable_androidx = True
 
 # 云端构建必须自动接受 Android SDK 许可，否则 build-tools 会被跳过，
 # 接着报 "build-tools folder not found" / "Aidl not found"。

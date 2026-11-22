@@ -91,20 +91,19 @@ jobs:
           key: buildozer-${{ runner.os }}-${{ hashFiles('android/buildozer.spec') }}
 
       # 9) 构建 debug APK（首次约 20-40 分钟）
-      #    日志同时落盘；失败时把关键错误行写进 Summary，便于在不下载日志的情况下定位。
+      #    日志同时落盘；无论成败都上传，失败时可直接下载 buildozer.log 定位。
       - name: Build APK
-        run: |
-          set +e
-          buildozer -v android debug 2>&1 | tee buildozer.log
-          CODE=${PIPESTATUS[0]}
-          if [ "$CODE" -ne 0 ]; then
-            echo "## Buildozer 失败关键行" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            grep -iE "error|failed|could not|no such|cannot|exception|traceback" buildozer.log \
-              | tail -60 >> "$GITHUB_STEP_SUMMARY" || true
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            exit "$CODE"
-          fi
+        run: buildozer -v android debug 2>&1 | tee buildozer.log
+
+      # 9b) 上传构建日志（即使失败也上传，便于定位 Gradle/AAR 错误）
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: buildozer.log
+          retention-days: 14
+          if-no-files-found: warn
 
       # 10) 上传 APK 供下载（artifact 默认保留 90 天，这里设 30 天）
       - name: Upload APK
