@@ -93,7 +93,10 @@ jobs:
       # 9) 构建 debug APK（首次约 20-40 分钟）
       #    日志同时落盘；无论成败都上传，失败时可直接下载 buildozer.log 定位。
       - name: Build APK
-        run: buildozer -v android debug 2>&1 | tee buildozer.log
+        # pipefail 让 buildozer 的失败透过 tee 传播，步骤状态才真实（否则永远显示 success）
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee buildozer.log
 
       # 9b) 上传构建日志（即使失败也上传，便于定位 Gradle/AAR 错误）
       - name: Upload build log
@@ -107,6 +110,7 @@ jobs:
 
       # 10) 上传 APK 供下载（artifact 默认保留 90 天，这里设 30 天）
       - name: Upload APK
+        if: success()   # 构建失败时跳过，避免再报一次 No files found 干扰判断
         uses: actions/upload-artifact@v4
         with:
           name: ownerrightsai-debug-apk
