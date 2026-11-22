@@ -65,9 +65,13 @@ android.api = 35
 android.minapi = 21
 android.sdk = 35
 android.ndk = 25c
-# 键名必须是 enable_androidx（use_androidx 是无效键，会被忽略）；
-# Tesseract4Android 及其 Kotlin/AndroidX 传递依赖需要启用 AndroidX
-android.enable_androidx = True
+# 不要启用 AndroidX。
+# 血泪教训：旧版用无效键 use_androidx（实际未启用）时能正常打开；
+# 一旦改成 enable_androidx=True，启动即在 SDLActivity.nativeSetenv 报
+# UnsatisfiedLinkError（native 库符号不匹配）。
+# Tesseract4Android 4.9.0 的 AAR 只引用 androidx.annotation.*（编译期注解，
+# compileSdk 自带），无 Kotlin/运行时 AndroidX 依赖，因此无需启用 AndroidX。
+android.enable_androidx = False
 
 # 云端构建必须自动接受 Android SDK 许可，否则 build-tools 会被跳过，
 # 接着报 "build-tools folder not found" / "Aidl not found"。
