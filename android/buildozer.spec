@@ -48,10 +48,16 @@ requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer,plyer,pyj
 # p4a 的 gradle 模板只配了 google()/mavenCentral()，而本库只发布在 JitPack。
 # 必须显式加 JitPack 仓库，否则依赖解析不到，报 :checkDebugAarMetadata 失败。
 #
-# 关键坑：buildozer 的 getlist() 只按逗号切分+strip，不处理引号。
+# 关键坑1：buildozer 的 getlist() 只按逗号切分+strip，不处理引号。
 # 若写成 "maven { url '...' }"，外层双引号会被当作字面量传进 build.gradle，
 # Gradle 不识别 → 等于没加。所以：外层不加引号，内层用双引号，且整行不能有逗号。
-android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.9.0
+#
+# 关键坑2：坐标必须带 @aar。该库 POM 只有一条传递依赖
+# androidx.annotation:annotation:1.3.0；不带 @aar 时 Gradle 会解析它，
+# 随后 :checkDebugAarMetadata 强制要求 android.useAndroidX=true。
+# 而启用 AndroidX 会让 SDLActivity.nativeSetenv 在手机上启动闪退。
+# @aar 是 Gradle 的 artifact-only 写法：只读 AAR 本身，跳过 POM 和传递依赖。
+android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.9.0@aar
 android.add_gradle_repositories = maven { url "https://jitpack.io" }
 
 # 屏幕方向：工具型应用，竖屏为主
