@@ -60,6 +60,13 @@ requirements = python3,kivy==2.3.2,requests,certifi,charset-normalizer,plyer,pyj
 android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.9.0@aar
 android.add_gradle_repositories = maven { url "https://jitpack.io" }
 
+# 只保留 armeabi-v7a 的 native 库。
+# Tesseract4Android AAR 自带 arm64-v8a/x86/x86_64 的 so，但 p4a 这里只构建 armeabi-v7a。
+# 64 位手机看到 APK 里有 arm64-v8a 目录就只从该目录加载 so，而里面没有 libSDL2.so，
+# 于是 PythonActivity 调 SDLActivity.nativeSetenv 时报 UnsatisfiedLinkError 闪退。
+# 把这些多余 ABI 的 so 排除掉，手机才会回退到完整的 armeabi-v7a 目录。
+android.add_packaging_options = jniLibs.excludes += 'lib/arm64-v8a/*.so', jniLibs.excludes += 'lib/x86/*.so', jniLibs.excludes += 'lib/x86_64/*.so'
+
 # 屏幕方向：工具型应用，竖屏为主
 orientation = portrait
 
